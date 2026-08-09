@@ -1,0 +1,10 @@
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__
+backend/basement.db
+backend/*.db
+frontend/node_modules
+frontend/dist
+.git
+*.jpg
+*.pdf
