@@ -24,4 +24,19 @@ export const api = {
   patchFeature: (id, patch) =>
     request(`/features/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteFeature: (id) => request(`/features/${id}`, { method: "DELETE" }),
+  patchRoom: (id, patch) =>
+    request(`/rooms/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  getLabor: () => request("/labor"),
+  createLabor: (entry) => request("/labor", { method: "POST", body: JSON.stringify(entry) }),
+  patchLabor: (id, patch) =>
+    request(`/labor/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteLabor: (id) => request(`/labor/${id}`, { method: "DELETE" }),
+
+  getBankTransactions: () => request("/bank-transactions"),
+  importBankTransactions: (rows) =>
+    request("/bank-transactions/bulk-import", { method: "POST", body: JSON.stringify(rows) }),
+  patchBankTransaction: (id, patch) =>
+    request(`/bank-transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteBankTransaction: (id) => request(`/bank-transactions/${id}`, { method: "DELETE" }),
 };

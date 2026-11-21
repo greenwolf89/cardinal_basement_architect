@@ -33,6 +33,12 @@ class Room(Base):
     color = Column(String, default="#e8e2d4")
     notes = Column(Text, default="")
 
+    # Construction progress — manually set via the room detail panel, not
+    # auto-derived from walls/checklist (keeps it simple and user-correctable).
+    progress_pct = Column(Integer, default=0)
+    status_label = Column(String, default="")
+    progress_note = Column(Text, default="")
+
     stage = relationship("Stage", back_populates="rooms")
 
 
@@ -47,6 +53,7 @@ class Wall(Base):
     y2 = Column(Float)
     thickness_in = Column(Float, default=4.5)
     wall_type = Column(String, default="existing")  # existing | new | removed
+    build_status = Column(String, default="planned")  # planned | framed | complete
     notes = Column(Text, default="")
 
     stage = relationship("Stage", back_populates="walls")
@@ -58,7 +65,7 @@ class Opening(Base):
 
     id = Column(Integer, primary_key=True)
     wall_id = Column(Integer, ForeignKey("walls.id"))
-    type = Column(String)  # door | window | garage_door | egress_window
+    type = Column(String)  # door | window | garage_door | egress_window | folding_door
     offset_in = Column(Float)  # distance from wall start (x1,y1) to opening start
     width_in = Column(Float)
     notes = Column(Text, default="")
@@ -94,6 +101,7 @@ class Resource(Base):
     quantity = Column(String, default="")
     unit = Column(String, default="")
     space = Column(String, default="")  # garage | basement | both
+    room_name = Column(String, nullable=True)
     status = Column(String, default="needed")  # needed | ordered | on_site | installed
     notes = Column(Text, default="")
     sort_order = Column(Integer, default=0)
@@ -134,4 +142,37 @@ class ChecklistItem(Base):
     description = Column(Text, default="")
     status = Column(String, default="not_started")  # not_started | in_progress | blocked | done
     depends_on = Column(String, default="")  # comma-separated ChecklistItem ids
+    room_name = Column(String, nullable=True)
     sort_order = Column(Integer, default=0)
+
+
+class LaborEntry(Base):
+    """Hours (or a flat fee) paid to someone working on the project."""
+
+    __tablename__ = "labor_entries"
+
+    id = Column(Integer, primary_key=True)
+    person = Column(String)
+    rate_per_hour = Column(Float, nullable=True)
+    hours = Column(Float, nullable=True)
+    flat_fee = Column(Float, nullable=True)  # set instead of rate/hours for flat-fee work
+    date = Column(String, nullable=True)  # free-text date, e.g. "2026-11-20"
+    task = Column(String, default="")
+    room_name = Column(String, nullable=True)
+    notes = Column(Text, default="")
+
+
+class BankTransaction(Base):
+    """A transaction imported from a bank/Rocket Money CSV export."""
+
+    __tablename__ = "bank_transactions"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(String, nullable=True)
+    description = Column(String, default="")
+    amount = Column(Float)
+    category = Column(String, nullable=True)
+    source = Column(String, default="")  # e.g. "chase" | "rocket_money"
+    room_name = Column(String, nullable=True)
+    resource_id = Column(Integer, ForeignKey("resources.id"), nullable=True)
+    notes = Column(Text, default="")

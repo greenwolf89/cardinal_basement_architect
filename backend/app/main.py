@@ -75,6 +75,18 @@ def update_room(room_id: int, room: schemas.RoomBase, db: Session = Depends(get_
     return obj
 
 
+@app.patch("/rooms/{room_id}", response_model=schemas.RoomOut)
+def patch_room(room_id: int, patch: schemas.RoomUpdate, db: Session = Depends(get_db)):
+    obj = db.get(models.Room, room_id)
+    if not obj:
+        raise HTTPException(404, "Room not found")
+    for k, v in patch.model_dump(exclude_unset=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
 @app.delete("/rooms/{room_id}")
 def delete_room(room_id: int, db: Session = Depends(get_db)):
     obj = db.get(models.Room, room_id)
@@ -256,6 +268,81 @@ def update_checklist_item(item_id: int, patch: schemas.ChecklistItemUpdate, db: 
 @app.delete("/checklist/{item_id}")
 def delete_checklist_item(item_id: int, db: Session = Depends(get_db)):
     obj = db.get(models.ChecklistItem, item_id)
+    if obj:
+        db.delete(obj)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------- Labor ----------
+
+@app.get("/labor", response_model=list[schemas.LaborEntryOut])
+def list_labor(db: Session = Depends(get_db)):
+    return db.query(models.LaborEntry).order_by(models.LaborEntry.id).all()
+
+
+@app.post("/labor", response_model=schemas.LaborEntryOut)
+def create_labor(entry: schemas.LaborEntryCreate, db: Session = Depends(get_db)):
+    obj = models.LaborEntry(**entry.model_dump())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.patch("/labor/{entry_id}", response_model=schemas.LaborEntryOut)
+def update_labor(entry_id: int, patch: schemas.LaborEntryUpdate, db: Session = Depends(get_db)):
+    obj = db.get(models.LaborEntry, entry_id)
+    if not obj:
+        raise HTTPException(404, "Labor entry not found")
+    for k, v in patch.model_dump(exclude_unset=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.delete("/labor/{entry_id}")
+def delete_labor(entry_id: int, db: Session = Depends(get_db)):
+    obj = db.get(models.LaborEntry, entry_id)
+    if obj:
+        db.delete(obj)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------- Bank transactions ----------
+
+@app.get("/bank-transactions", response_model=list[schemas.BankTransactionOut])
+def list_bank_transactions(db: Session = Depends(get_db)):
+    return db.query(models.BankTransaction).order_by(models.BankTransaction.date.desc()).all()
+
+
+@app.post("/bank-transactions/bulk-import", response_model=list[schemas.BankTransactionOut])
+def bulk_import_bank_transactions(rows: list[schemas.BankTransactionCreate], db: Session = Depends(get_db)):
+    objs = [models.BankTransaction(**row.model_dump()) for row in rows]
+    db.add_all(objs)
+    db.commit()
+    for obj in objs:
+        db.refresh(obj)
+    return objs
+
+
+@app.patch("/bank-transactions/{tx_id}", response_model=schemas.BankTransactionOut)
+def update_bank_transaction(tx_id: int, patch: schemas.BankTransactionUpdate, db: Session = Depends(get_db)):
+    obj = db.get(models.BankTransaction, tx_id)
+    if not obj:
+        raise HTTPException(404, "Bank transaction not found")
+    for k, v in patch.model_dump(exclude_unset=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.delete("/bank-transactions/{tx_id}")
+def delete_bank_transaction(tx_id: int, db: Session = Depends(get_db)):
+    obj = db.get(models.BankTransaction, tx_id)
     if obj:
         db.delete(obj)
         db.commit()

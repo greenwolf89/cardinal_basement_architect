@@ -27,6 +27,7 @@ class WallBase(BaseModel):
     y2: float
     thickness_in: float = 4.5
     wall_type: str = "existing"
+    build_status: str = "planned"
     notes: str = ""
 
 
@@ -49,10 +50,26 @@ class RoomBase(BaseModel):
     height: float
     color: str = "#e8e2d4"
     notes: str = ""
+    progress_pct: int = 0
+    status_label: str = ""
+    progress_note: str = ""
 
 
 class RoomCreate(RoomBase):
     stage_id: int
+
+
+class RoomUpdate(BaseModel):
+    name: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+    color: Optional[str] = None
+    notes: Optional[str] = None
+    progress_pct: Optional[int] = None
+    status_label: Optional[str] = None
+    progress_note: Optional[str] = None
 
 
 class RoomOut(RoomBase):
@@ -141,6 +158,7 @@ class ResourceBase(BaseModel):
     quantity: str = ""
     unit: str = ""
     space: str = ""
+    room_name: Optional[str] = None
     status: str = "needed"
     notes: str = ""
     sort_order: int = 0
@@ -156,6 +174,7 @@ class ResourceUpdate(BaseModel):
     quantity: Optional[str] = None
     unit: Optional[str] = None
     space: Optional[str] = None
+    room_name: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
     sort_order: Optional[int] = None
@@ -180,6 +199,7 @@ class ChecklistItemBase(BaseModel):
     description: str = ""
     status: str = "not_started"
     depends_on: str = ""
+    room_name: Optional[str] = None
     sort_order: int = 0
 
 
@@ -194,9 +214,72 @@ class ChecklistItemUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[str] = None
     depends_on: Optional[str] = None
+    room_name: Optional[str] = None
     sort_order: Optional[int] = None
 
 
 class ChecklistItemOut(ChecklistItemBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class LaborEntryBase(BaseModel):
+    person: str
+    rate_per_hour: Optional[float] = None
+    hours: Optional[float] = None
+    flat_fee: Optional[float] = None
+    date: Optional[str] = None
+    task: str = ""
+    room_name: Optional[str] = None
+    notes: str = ""
+
+
+class LaborEntryCreate(LaborEntryBase):
+    pass
+
+
+class LaborEntryUpdate(BaseModel):
+    person: Optional[str] = None
+    rate_per_hour: Optional[float] = None
+    hours: Optional[float] = None
+    flat_fee: Optional[float] = None
+    date: Optional[str] = None
+    task: Optional[str] = None
+    room_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LaborEntryOut(LaborEntryBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class BankTransactionBase(BaseModel):
+    date: Optional[str] = None
+    description: str = ""
+    amount: float
+    category: Optional[str] = None
+    source: str = ""
+    room_name: Optional[str] = None
+    resource_id: Optional[int] = None
+    notes: str = ""
+
+
+class BankTransactionCreate(BankTransactionBase):
+    pass
+
+
+class BankTransactionUpdate(BaseModel):
+    date: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    category: Optional[str] = None
+    source: Optional[str] = None
+    room_name: Optional[str] = None
+    resource_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class BankTransactionOut(BankTransactionBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
