@@ -16,7 +16,12 @@ stage = db.query(models.Stage).filter(models.Stage.key == "current").first()
 if not stage:
     raise SystemExit("Run seed.py first to create the 'current' stage.")
 
-# Wipe any prior geometry for this stage so the script is re-runnable.
+# Wipe any prior geometry for this stage so the script is re-runnable. Openings
+# have to be deleted explicitly first — a bulk Query.delete() on Wall bypasses
+# the ORM-level delete-orphan cascade, so without this their Opening rows
+# would be orphaned (and silently reattach to whatever wall ID gets reused next).
+old_wall_ids = [w.id for w in db.query(models.Wall).filter(models.Wall.stage_id == stage.id)]
+db.query(models.Opening).filter(models.Opening.wall_id.in_(old_wall_ids)).delete(synchronize_session=False)
 db.query(models.Room).filter(models.Room.stage_id == stage.id).delete()
 db.query(models.Wall).filter(models.Wall.stage_id == stage.id).delete()
 db.query(models.Feature).filter(models.Feature.stage_id == stage.id).delete()

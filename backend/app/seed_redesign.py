@@ -6,17 +6,19 @@ Layout:
   Split by a new wall on the pole/beam line into a Music Studio (east) and
   Storage & Water Filtration (west). Pole sits 12' from the west wall and
   8' from the garage/band division line.
-- BAND (transition strip, 3'4" deep): walled-off utility room, bathroom
-  (former laundry room, pump-up toilet), closet-under-steps left at its full
-  original footprint, platform/hallway through to the garage.
-- The Bathroom is deepened to extend the same total depth as the new Laundry
-  Room addition below it; a new Laundry Room sits beside it (outside the
-  closet-under-steps footprint, not inside it), sharing one continuous new
-  south wall with the deepened Bathroom. Entry is a door into the Bathroom
-  from the band, then a second door from the Bathroom into the Laundry Room.
+- BAND (transition strip): a 4'x10' Utility Room (boiler, airflow via a
+  folding door) beside an 8'x10' full Bathroom (toilet, sink, walk-in
+  shower) — both extend 10' off the garage/band wall, well past the old
+  3'4" band depth. East of that, the rest of the band (what used to be a
+  walled-off storage nook under the stairs plus the garage-access platform)
+  is now one open Hallway / Stair Landing with no interior walls — it leads
+  straight down into the Living/Family Room and up the stairs to the main
+  house.
 - BASEMENT (rear, 24'4.5" wide x 27'5" deep): Living / Family Room — built-in
   shelving on the east wall (longest unbroken wall), kid play zone in the
-  back corner, family sofa + sleeper sofa, egress window on the west wall.
+  back corner, family sofa + sleeper sofa, egress window on the west wall,
+  mini-split (18,000 BTU). Laundry has moved upstairs — no laundry room or
+  appliance feature in this stage anymore.
 """
 
 from .database import Base, SessionLocal, engine
@@ -30,6 +32,12 @@ stage = db.query(models.Stage).filter(models.Stage.key == "redesign").first()
 if not stage:
     raise SystemExit("Run seed.py first to create the 'redesign' stage.")
 
+# Openings have to be deleted explicitly first — a bulk Query.delete() on Wall
+# bypasses the ORM-level delete-orphan cascade, so without this their Opening
+# rows would be orphaned (and silently reattach to whatever wall ID gets
+# reused next time this script runs).
+old_wall_ids = [w.id for w in db.query(models.Wall).filter(models.Wall.stage_id == stage.id)]
+db.query(models.Opening).filter(models.Opening.wall_id.in_(old_wall_ids)).delete(synchronize_session=False)
 db.query(models.Room).filter(models.Room.stage_id == stage.id).delete()
 db.query(models.Wall).filter(models.Wall.stage_id == stage.id).delete()
 db.query(models.Feature).filter(models.Feature.stage_id == stage.id).delete()
@@ -37,80 +45,86 @@ db.commit()
 
 FULL_W = 292.5  # 24'4.5"
 GARAGE_D = 235  # 19'7"
-BAND_D = 40  # 3'4"
+BAND_D = 40  # 3'4" — depth of the open hallway/landing strip only
 BASEMENT_D = 329  # 27'5"
 TOTAL_D = GARAGE_D + BAND_D + BASEMENT_D
 BAND_Y = GARAGE_D
 BASEMENT_Y = GARAGE_D + BAND_D
 DIVIDER_X = 144  # pole: 12' from west wall
-LAUNDRY_Y = BASEMENT_Y  # laundry addition sits at the very front of the basement
-LAUNDRY_D = 50
+
+UTILITY_W = 48  # 4'
+BATHROOM_W = 96  # 8'
+BATH_UTIL_W = UTILITY_W + BATHROOM_W  # 144" — lines up with the hallway starting here
+BATH_UTIL_DEPTH = 120  # 10' off the garage/band wall
+BATH_UTIL_BOTTOM = BAND_Y + BATH_UTIL_DEPTH  # 355
 
 # ---------------- Rooms ----------------
 rooms = [
     ("Storage & Water Filtration", 0, 0, DIVIDER_X, GARAGE_D, "#e6e6da",
      "Water filtration system + shelving/racking."),
     ("Music Studio", DIVIDER_X, 0, FULL_W - DIVIDER_X, GARAGE_D, "#e0d8e8",
-     "Acoustic treatment on walls."),
-    ("Utility Room", 0, BAND_Y, 51, BAND_D + LAUNDRY_D, "#dfe3e6",
-     "Deepened to match the bathroom/laundry — extends down to the same south wall. "
-     "Boiler, wall pump, water heater. Double door in from the Bathroom."),
-    ("Bathroom", 51, BAND_Y, 95, BAND_D + LAUNDRY_D, "#e3ecec",
-     "Deepened to match the Laundry Room beside it. Pump-up (macerating) toilet + sink. "
-     "Door in from the Living/Family Room; a second door leads to the Laundry Room."),
-    ("Closet Under Steps", 146, BAND_Y, 114, BAND_D, "#efe9df",
-     "Stair storage — unchanged footprint."),
-    ("Platform / Hallway", 260, BAND_Y, 32.5, BAND_D, "#f2f2e9",
-     "Connects band to garage; floor leveled to 2\" raised floor."),
+     "Acoustic treatment on walls.",
+     20, "Framing", "Garage divider wall framed (6\" stud wall)."),
+    ("Utility Room", 0, BAND_Y, UTILITY_W, BATH_UTIL_DEPTH, "#dfe3e6",
+     "4'x10'. Boiler. Folding door into the Bathroom gives it airflow."),
+    ("Bathroom", UTILITY_W, BAND_Y, BATHROOM_W, BATH_UTIL_DEPTH, "#e3ecec",
+     "8'x10' full bath — toilet, sink, walk-in shower. Door in from the Living/Family Room."),
+    ("Hallway / Stair Landing", BATH_UTIL_W, BAND_Y, FULL_W - BATH_UTIL_W, BAND_D, "#f2f2e9",
+     "Open — no interior walls. Connects the garage door, the stairs up to the main house, "
+     "and the Living/Family Room below. Used to be split into a storage closet and a platform."),
     ("Living / Family Room", 0, BASEMENT_Y, FULL_W, BASEMENT_D, "#f4ecd8",
-     "Built-in shelving, kid play zone, family + sleeper sofa. Egress window on west wall."),
-    ("Laundry Room", 146, LAUNDRY_Y, 114, LAUNDRY_D, "#eaf0e6",
-     "New addition beside the (deepened) bathroom, outside the closet-under-steps footprint. "
-     "Washer/dryer. Reached via a door from the Bathroom."),
+     "Built-in shelving, kid play zone, family + sleeper sofa, mini-split (18,000 BTU). "
+     "Egress window on west wall.",
+     15, "Framing", "Two of three exterior walls framed (east + west, basement portion); "
+     "back wall still open."),
 ]
-for name, x, y, w, h, color, notes in rooms:
-    db.add(models.Room(stage_id=stage.id, name=name, x=x, y=y, width=w, height=h, color=color, notes=notes))
+for row in rooms:
+    name, x, y, w, h, color, notes = row[:7]
+    progress_pct, status_label, progress_note = (row[7], row[8], row[9]) if len(row) > 7 else (0, "", "")
+    db.add(models.Room(stage_id=stage.id, name=name, x=x, y=y, width=w, height=h, color=color, notes=notes,
+                        progress_pct=progress_pct, status_label=status_label, progress_note=progress_note))
 
 # ---------------- Walls ----------------
-def wall(x1, y1, x2, y2, wall_type="existing", notes=""):
-    w = models.Wall(stage_id=stage.id, x1=x1, y1=y1, x2=x2, y2=y2, wall_type=wall_type, notes=notes)
+def wall(x1, y1, x2, y2, wall_type="existing", notes="", build_status="planned"):
+    w = models.Wall(stage_id=stage.id, x1=x1, y1=y1, x2=x2, y2=y2, wall_type=wall_type, notes=notes,
+                     build_status=build_status)
     db.add(w)
     db.flush()
     return w
 
-# Perimeter
+# Perimeter — west and east walls are split at the basement boundary so framing
+# progress (item 12: two of the three basement exterior walls, the longer two,
+# are already framed) can be marked on just the basement portion, not the
+# garage/band portion of the same wall line.
 front_wall = wall(0, 0, FULL_W, 0, notes="Garage door removed. New wall: solid wood door + double windows.")
-wall(FULL_W, 0, FULL_W, TOTAL_D)
-wall(FULL_W, TOTAL_D, 0, TOTAL_D)
-west_wall = wall(0, TOTAL_D, 0, 0, notes="Egress window on Living/Family Room portion of this wall.")
+wall(FULL_W, BASEMENT_Y, FULL_W, 0, notes="East wall — garage + band portion.")
+east_wall_basement = wall(FULL_W, TOTAL_D, FULL_W, BASEMENT_Y, build_status="framed",
+                           notes="East wall — basement portion. Framed.")
+back_wall = wall(FULL_W, TOTAL_D, 0, TOTAL_D, notes="Back wall — not yet framed.")
+wall(0, BASEMENT_Y, 0, 0, notes="West wall — garage + band portion.")
+west_wall = wall(0, TOTAL_D, 0, BASEMENT_Y, build_status="framed",
+                  notes="West wall — basement portion. Framed. Egress window on this segment.")
 
-# Band interior walls
-utility_bath_wall = wall(51, BAND_Y, 51, BAND_Y + BAND_D, "new", "Utility room wall — double door for access.")
-closet_bathroom_wall = wall(146, BAND_Y, 146, BAND_Y + BAND_D, "existing",
-                             "Closet-under-steps (stairs landing) / Bathroom wall — has a door.")
-wall(260, BAND_Y, 260, BAND_Y + BAND_D, "existing")
+# Band interior walls — Utility Room / Bathroom block, 10' deep off the garage/band wall.
+utility_bath_wall = wall(UTILITY_W, BAND_Y, UTILITY_W, BATH_UTIL_BOTTOM, "new",
+                          "Utility Room / Bathroom wall — folding door for boiler airflow.")
+bath_util_east_wall = wall(BATH_UTIL_W, BAND_Y, BATH_UTIL_W, BATH_UTIL_BOTTOM, "new",
+                            "Bathroom / Hallway wall.")
+bath_util_south_wall = wall(0, BATH_UTIL_BOTTOM, BATH_UTIL_W, BATH_UTIL_BOTTOM, "new",
+                             "Shared south wall for the Utility Room + Bathroom block. "
+                             "Door into the Bathroom from the Living/Family Room.")
 
 band_north_wall = wall(0, BAND_Y, FULL_W, BAND_Y, "existing")
-closet_laundry_wall = wall(146, BAND_Y + BAND_D, 260, BAND_Y + BAND_D, "existing",
-                            "Closet-under-steps (stairs landing) / Laundry Room wall — has a door.")
-# No wall from x=260 to the east wall here — this is the stairwell up to the
-# main house, open from the Platform/Hallway straight through to the Living/
-# Family Room below.
+# No walls at all east of x=144 in the band, and no wall at y=275 anywhere — the old
+# storage-closet-under-the-stairs and garage-access platform are now one open
+# Hallway / Stair Landing, leading straight through to the Living/Family Room.
 
-# Utility Room and Bathroom both extend down alongside the new Laundry Room addition —
-# their shared interior walls continue down to one common new south wall.
-wall(51, BAND_Y + BAND_D, 51, LAUNDRY_Y + LAUNDRY_D, "new", "Utility Room / Bathroom wall, lower (new) portion.")
-bathroom_laundry_wall = wall(146, BAND_Y + BAND_D, 146, LAUNDRY_Y + LAUNDRY_D, "new",
-                              "Bathroom / Laundry Room wall, lower (new) portion — has a door.")
-wall(260, LAUNDRY_Y, 260, LAUNDRY_Y + LAUNDRY_D, "new", "East wall of laundry addition.")
-laundry_south_wall = wall(0, LAUNDRY_Y + LAUNDRY_D, 260, LAUNDRY_Y + LAUNDRY_D, "new",
-                           "Shared outer south wall for the utility room, bathroom, and laundry addition.")
-
-# Garage dividing wall — planned, garage side only, on the pole/beam line
-divider_wall = wall(DIVIDER_X, 0, DIVIDER_X, GARAGE_D, "new",
-     "On the pole/beam line: 12' from west wall, 8' from the garage/band division. "
-     "Separates Music Studio from Storage & Water Filtration. Has a door near the back.")
-
+# Garage dividing wall — framed now (item 12): 6" stud wall on the pole/beam line.
+divider_wall = wall(DIVIDER_X, 0, DIVIDER_X, GARAGE_D, "new", build_status="framed",
+     notes="On the pole/beam line: 12' from west wall, 8' from the garage/band division. "
+     "Separates Music Studio from Storage & Water Filtration. Framed as a 6\" stud wall; "
+     "has a door near the back.")
+divider_wall.thickness_in = 6
 db.commit()
 
 # ---------------- Openings ----------------
@@ -128,14 +142,12 @@ db.add(models.Opening(wall_id=divider_wall.id, type="door", offset_in=195, width
                        notes="Music Studio -> Storage & Water Filtration, near the back (basement) wall."))
 db.add(models.Opening(wall_id=west_wall.id, type="egress_window", offset_in=128, width_in=36,
                        notes="10'8\" from the back wall."))
-db.add(models.Opening(wall_id=utility_bath_wall.id, type="door", offset_in=6, width_in=60,
-                       notes="Double door — Bathroom into Utility Room."))
-db.add(models.Opening(wall_id=laundry_south_wall.id, type="door", offset_in=90, width_in=30,
+db.add(models.Opening(wall_id=utility_bath_wall.id, type="folding_door", offset_in=45, width_in=30,
+                       notes="Folding door — Bathroom into Utility Room. Airflow for the boiler."))
+db.add(models.Opening(wall_id=bath_util_south_wall.id, type="door", offset_in=70, width_in=30,
                        notes="Living/Family Room -> Bathroom door."))
-db.add(models.Opening(wall_id=bathroom_laundry_wall.id, type="door", offset_in=15, width_in=30,
-                       notes="Bathroom -> Laundry Room door."))
 db.add(models.Opening(wall_id=band_north_wall.id, type="door", offset_in=265, width_in=25,
-                       notes="Platform/Hallway -> garage door."))
+                       notes="Hallway/Stair Landing -> garage door."))
 db.commit()
 
 # ---------------- Features ----------------
@@ -156,17 +168,20 @@ feature("Music Studio", "acoustic_treatment", FULL_W - 11, 30, 5, GARAGE_D - 100
         "Acoustic panel — east wall")
 feature("Music Studio", "acoustic_treatment", DIVIDER_X + 6, 30, 5, GARAGE_D - 100,
         "Acoustic panel — dividing wall side")
+feature("Music Studio", "mini_split", DIVIDER_X + 15, 10, 14, 6, "Mini-split — 9,000 BTU")
 
-feature("Bathroom", "toilet", 60, BAND_Y + 10, 15, 20, "Pump-up (macerating) toilet")
-feature("Bathroom", "sink", 100, BAND_Y + 5, 20, 15, "Sink")
+feature("Utility Room", "boiler", 10, BAND_Y + 10, 20, 20, "Boiler")
 
-feature("Laundry Room", "appliance", 175, LAUNDRY_Y + 12, 30, 20, "Washer/dryer")
+feature("Bathroom", "toilet", UTILITY_W + 7, BAND_Y + 10, 16, 20, "Toilet")
+feature("Bathroom", "sink", UTILITY_W + 62, BAND_Y + 10, 20, 15, "Sink")
+feature("Bathroom", "shower", UTILITY_W + 37, BATH_UTIL_BOTTOM - 35, 40, 32, "Walk-in shower")
 
 feature("Living / Family Room", "built_in_shelving", FULL_W - 14, BASEMENT_Y + 60, 12, 168,
         "Built-in shelving along the east wall (longest unbroken wall).")
 feature("Living / Family Room", "kid_zone", 15, BASEMENT_Y + BASEMENT_D - 95, 80, 80, "Kid play zone")
 feature("Living / Family Room", "sofa", 100, BASEMENT_Y + 60, 90, 34, "Family sofa")
 feature("Living / Family Room", "sleeper_sofa", 100, BASEMENT_Y + 120, 80, 34, "Sleeper sofa (guests)")
+feature("Living / Family Room", "mini_split", FULL_W - 30, BASEMENT_Y + 8, 16, 7, "Mini-split — 18,000 BTU")
 
 db.commit()
 db.close()
