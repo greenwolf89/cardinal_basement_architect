@@ -93,7 +93,9 @@ wall(260, BAND_Y, 260, BAND_Y + BAND_D, "existing")
 band_north_wall = wall(0, BAND_Y, FULL_W, BAND_Y, "existing")
 closet_laundry_wall = wall(146, BAND_Y + BAND_D, 260, BAND_Y + BAND_D, "existing",
                             "Closet-under-steps (stairs landing) / Laundry Room wall — has a door.")
-wall(260, BAND_Y + BAND_D, FULL_W, BAND_Y + BAND_D, "existing")  # under platform, unchanged
+# No wall from x=260 to the east wall here — this is the stairwell up to the
+# main house, open from the Platform/Hallway straight through to the Living/
+# Family Room below.
 
 # Utility Room and Bathroom both extend down alongside the new Laundry Room addition —
 # their shared interior walls continue down to one common new south wall.

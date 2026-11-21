@@ -67,7 +67,9 @@ wall(260, GARAGE_D, 260, GARAGE_D + BAND_D)
 
 # Garage/band and band/basement boundary lines
 band_garage_wall = wall(0, GARAGE_D, FULL_W, GARAGE_D)
-wall(0, GARAGE_D + BAND_D, FULL_W, GARAGE_D + BAND_D)
+# Stops at x=260 — no wall from there to the east wall: that's the stairwell
+# up to the main house, open straight through from the platform to the Basement.
+wall(0, GARAGE_D + BAND_D, 260, GARAGE_D + BAND_D)
 
 db.commit()
 
