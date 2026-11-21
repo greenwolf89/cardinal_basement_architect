@@ -4,21 +4,27 @@ import FloorPlanEditor from "./components/FloorPlanEditor";
 import FloorPlan3D from "./components/FloorPlan3D";
 import ResourceList from "./components/ResourceList";
 import Checklist from "./components/Checklist";
+import Budget from "./components/Budget";
+import RoomDetailPanel from "./components/RoomDetailPanel";
 import "./App.css";
 
-const TABS = ["Floor Plan", "Resources", "Checklist"];
+const TABS = ["Floor Plan", "Resources", "Budget", "Checklist"];
 
 export default function App() {
   const [tab, setTab] = useState("Floor Plan");
   const [stageKey, setStageKey] = useState("current");
   const [dimension, setDimension] = useState("2D");
   const [stage, setStage] = useState(null);
+  const [selectedRoomId, setSelectedRoomId] = useState(null);
 
   const reloadStage = useCallback(() => {
     api.getStage(stageKey).then(setStage);
   }, [stageKey]);
 
   useEffect(() => { reloadStage(); }, [reloadStage]);
+  useEffect(() => { setSelectedRoomId(null); }, [stageKey]);
+
+  const selectedRoom = stage?.rooms.find((r) => r.id === selectedRoomId);
 
   return (
     <div className="app">
@@ -56,13 +62,24 @@ export default function App() {
               </div>
             </div>
             {dimension === "2D" ? (
-              <FloorPlanEditor stage={stage} stageId={stage?.id} stageLabel={stage?.label} onFeaturesChanged={reloadStage} />
+              <FloorPlanEditor stage={stage} stageId={stage?.id} stageLabel={stage?.label}
+                onFeaturesChanged={reloadStage} onRoomSelect={(room) => setSelectedRoomId(room.id)} />
             ) : (
-              <FloorPlan3D stage={stage} stageId={stage?.id} onFeaturesChanged={reloadStage} />
+              <FloorPlan3D stage={stage} stageId={stage?.id} onFeaturesChanged={reloadStage}
+                onRoomSelect={(room) => setSelectedRoomId(room.id)} />
+            )}
+            {selectedRoom && (
+              <RoomDetailPanel
+                room={selectedRoom}
+                features={(stage.features || []).filter((f) => f.room_name === selectedRoom.name)}
+                onClose={() => setSelectedRoomId(null)}
+                onSaved={reloadStage}
+              />
             )}
           </div>
         )}
         {tab === "Resources" && <ResourceList />}
+        {tab === "Budget" && <Budget />}
         {tab === "Checklist" && <Checklist />}
       </main>
     </div>

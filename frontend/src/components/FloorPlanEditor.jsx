@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Stage, Layer, Rect, Line, Circle, Text, Group, Transformer } from "react-konva";
 import { api } from "../api";
 import { formatFeetInches, formatDims } from "../format";
+import RoomHoverCard from "./RoomHoverCard";
 
 const FEATURE_COLORS = {
   pole: "#8a5a2b",
@@ -22,6 +23,8 @@ const FEATURE_COLORS = {
   water_filtration: "#3b7bb2",
   electric_panel: "#d9822b",
   acoustic_treatment: "#9b59b6",
+  shower: "#5fb3c9",
+  mini_split: "#2f9e44",
 };
 
 const PALETTE = [
@@ -31,11 +34,14 @@ const PALETTE = [
   { type: "kid_zone", label: "Kid Play Zone", w: 70, h: 70 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
+  { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
   { type: "appliance", label: "Washer/Dryer", w: 30, h: 20 },
   { type: "water_filtration", label: "Water Filtration", w: 20, h: 20 },
   { type: "shelving", label: "Storage Racking", w: 15, h: 60 },
   { type: "electric_panel", label: "Electric Sub Panel", w: 15, h: 20 },
   { type: "acoustic_treatment", label: "Acoustic Panel", w: 40, h: 8 },
+  { type: "boiler", label: "Boiler", w: 20, h: 20 },
+  { type: "mini_split", label: "Mini-split", w: 14, h: 6 },
 ];
 
 const MARGIN_LEFT = 64;
@@ -58,7 +64,187 @@ function downloadDataUrl(dataUrl, filename) {
   document.body.removeChild(a);
 }
 
-export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeaturesChanged }) {
+// Rooms/walls/openings/ladders/labels only change when the stage data, zoom,
+// or orientation change — not on every hover/select state update (which fires
+// continuously as the mouse moves over the canvas). Pulling this into its own
+// memoized component means those frequent re-renders in the parent skip
+// re-diffing ~100 static Konva nodes and only touch the furniture layer.
+const StaticPlanLayer = memo(function StaticPlanLayer({ stage, scale, fontScale, landscape, onRoomSelect, setHoveredRoom, setHoverPos }) {
+  const maxX = Math.max(...stage.walls.map((w) => Math.max(w.x1, w.x2)), 0);
+  const T = (ix, iy) => (landscape ? [iy, maxX - ix] : [ix, iy]);
+  const fs = (base) => Math.round(base * fontScale);
+  const sp = (base) => base * fontScale;
+  const sx_ = (v) => MARGIN_LEFT + v * scale;
+  const sy_ = (v) => MARGIN_TOP + TITLE_H + v * scale;
+  const pt = (ix, iy) => { const [rx, ry] = T(ix, iy); return { x: sx_(rx), y: sy_(ry) }; };
+  const rectScreen = (x, y, w, h) => {
+    const corners = [T(x, y), T(x + w, y), T(x, y + h), T(x + w, y + h)];
+    const xs = corners.map((c) => c[0]), ys = corners.map((c) => c[1]);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs), y1 = Math.max(...ys);
+    return { x: sx_(x0), y: sy_(y0), width: (x1 - x0) * scale, height: (y1 - y0) * scale };
+  };
+
+  const roomsByArea = [...stage.rooms].sort((a, b) => b.width * b.height - a.width * a.height);
+  const yBoundaries = [...new Set(
+    stage.walls.filter((w) => w.y1 === w.y2 && w.x1 !== w.x2).map((w) => w.y1)
+  )].sort((a, b) => a - b);
+  const depthSegments = yBoundaries
+    .map((yb, i) => ({ start: i === 0 ? 0 : yBoundaries[i - 1], end: yb }))
+    .filter((s) => s.end !== s.start)
+    .map((s) => ({ ...s, label: formatFeetInches(s.end - s.start) }));
+  const overallSpan = { start: 0, end: maxX, label: formatFeetInches(maxX) };
+  const topLadderSegments = landscape ? depthSegments : [overallSpan];
+  const sideLadderSegments = landscape ? [overallSpan] : depthSegments;
+  const sideRy = (v) => (landscape ? sy_(maxX - v) : sy_(v));
+
+  return (
+    <>
+      {/* Top dimension ladder */}
+      {topLadderSegments.map((seg, i) => {
+        const x1 = sx_(seg.start), x2 = sx_(seg.end);
+        const y = MARGIN_TOP + TITLE_H - 10;
+        return (
+          <Group key={`top-${i}`}>
+            <Line points={[x1, y, x2, y]} stroke="#9a9a9a" strokeWidth={1} />
+            <Line points={[x1, y - 3, x1, y + 3]} stroke="#9a9a9a" strokeWidth={1} />
+            <Line points={[x2, y - 3, x2, y + 3]} stroke="#9a9a9a" strokeWidth={1} />
+            <Text x={Math.min(x1, x2)} y={y - sp(16)} width={Math.abs(x2 - x1)} align="center"
+              text={seg.label} fontSize={fs(topLadderSegments.length > 1 ? 9 : 11)} fill="#777" />
+          </Group>
+        );
+      })}
+
+      {/* Side dimension ladder */}
+      {sideLadderSegments.map((seg, i) => {
+        const y1 = sideRy(seg.start), y2 = sideRy(seg.end);
+        const ymin = Math.min(y1, y2), ymax = Math.max(y1, y2);
+        const x = MARGIN_LEFT - 10;
+        return (
+          <Group key={`side-${i}`}>
+            <Line points={[x, ymin, x, ymax]} stroke="#9a9a9a" strokeWidth={1} />
+            <Line points={[x - 3, ymin, x + 3, ymin]} stroke="#9a9a9a" strokeWidth={1} />
+            <Line points={[x - 3, ymax, x + 3, ymax]} stroke="#9a9a9a" strokeWidth={1} />
+            <Text x={x - sp(42)} y={(ymin + ymax) / 2 - sp(6)} width={sp(30)} align="center"
+              text={seg.label} fontSize={fs(10)} fill="#777" />
+          </Group>
+        );
+      })}
+
+      {/* Rooms (painted largest-first so smaller additions layer visibly on top) */}
+      {roomsByArea.map((room) => {
+        const r = rectScreen(room.x, room.y, room.width, room.height);
+        return <Rect key={`r-${room.id}`} x={r.x} y={r.y} width={r.width} height={r.height}
+          fill={room.color} stroke="#00000014" strokeWidth={1}
+          onClick={() => onRoomSelect?.(room)} onTap={() => onRoomSelect?.(room)}
+          onMouseEnter={(e) => {
+            setHoveredRoom(room);
+            const pos = e.target.getStage().getPointerPosition();
+            if (pos) setHoverPos(pos);
+          }}
+          onMouseMove={(e) => {
+            const pos = e.target.getStage().getPointerPosition();
+            if (pos) setHoverPos(pos);
+          }}
+          onMouseLeave={() => setHoveredRoom((r2) => (r2?.id === room.id ? null : r2))} />;
+      })}
+
+      {/* Walls — framed walls get a solid "built lumber" tone regardless of
+          wall_type, since they're no longer just a plan on paper. */}
+      {stage.walls.map((wall) => {
+        const p1 = pt(wall.x1, wall.y1), p2 = pt(wall.x2, wall.y2);
+        const framed = wall.build_status === "framed" || wall.build_status === "complete";
+        const stroke = framed ? "#b08a55" : wall.wall_type === "new" ? "#c0392b" : "#2b2b2b";
+        return (
+          <Line key={`w-${wall.id}`}
+            points={[p1.x, p1.y, p2.x, p2.y]}
+            stroke={stroke}
+            strokeWidth={Math.max(2, (wall.thickness_in || 4.5) * scale * 0.5)}
+            dash={!framed && wall.wall_type === "new" ? [8, 5] : undefined}
+            lineCap="square"
+          />
+        );
+      })}
+
+      {/* Openings — offset_in is always measured along the wall starting at (x1,y1),
+          in whichever direction the wall was actually drawn toward (x2,y2). The
+          resulting rect is computed in plan space, then mapped to screen once. */}
+      {stage.walls.flatMap((wall) => (wall.openings || []).map((op) => {
+        const horizontal = wall.y1 === wall.y2;
+        const isDoor = op.type === "door" || op.type === "garage_door";
+        const color = op.type === "folding_door" ? "#e8d9b8" : isDoor ? "#ffffff" : "#bfe3ff";
+        const thick = Math.max(3 / scale, (wall.thickness_in || 4.5) * 0.6);
+        let x, y, w, h;
+        if (horizontal) {
+          const dir = wall.x2 >= wall.x1 ? 1 : -1;
+          const p1v = wall.x1 + dir * op.offset_in;
+          const p2v = wall.x1 + dir * (op.offset_in + op.width_in);
+          x = Math.min(p1v, p2v);
+          y = wall.y1 - thick / 2;
+          w = Math.abs(p2v - p1v);
+          h = thick;
+        } else {
+          const dir = wall.y2 >= wall.y1 ? 1 : -1;
+          const p1v = wall.y1 + dir * op.offset_in;
+          const p2v = wall.y1 + dir * (op.offset_in + op.width_in);
+          x = wall.x1 - thick / 2;
+          y = Math.min(p1v, p2v);
+          w = thick;
+          h = Math.abs(p2v - p1v);
+        }
+        const r = rectScreen(x, y, w, h);
+        return <Rect key={`op-${op.id}`} x={r.x} y={r.y} width={r.width} height={r.height}
+          fill={color} stroke="#666" strokeWidth={0.6} />;
+      }))}
+
+      {/* Room labels, centered within the room — if a smaller room visually overlaps
+          part of this room (e.g. a deepened side room painted on top), center within
+          whatever's left of this room's own footprint instead. */}
+      {stage.rooms.map((room, i) => {
+        const r = rectScreen(room.x, room.y, room.width, room.height);
+        const compact = r.width < 92 || r.height < 38;
+        const cornerX = room.x + 2, cornerY = room.y + 2;
+        const covering = stage.rooms.find((rm) =>
+          rm.id !== room.id && rm.width * rm.height < room.width * room.height &&
+          rm.x <= cornerX && rm.x + rm.width >= cornerX && rm.y <= cornerY && rm.y + rm.height > cornerY
+        );
+        let box = r;
+        if (covering) {
+          const adjY = Math.max(room.y, covering.y + covering.height);
+          const adjH = Math.max(1, room.y + room.height - adjY);
+          box = rectScreen(room.x, adjY, room.width, adjH);
+        }
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        const textW = Math.max(40, Math.min(box.width - 10, 160));
+        const r7 = sp(7);
+        return (
+          <Group key={`lbl-${room.id}`} listening={false}>
+            {compact ? (
+              <>
+                <Circle x={cx} y={cy} radius={r7} fill="#fff" stroke="#8a5a2b" strokeWidth={1} />
+                <Text x={cx - sp(6)} y={cy - sp(5)} width={sp(12)} align="center" text={`${i + 1}`}
+                  fontSize={fs(9)} fontStyle="700" fill="#8a5a2b" />
+              </>
+            ) : (
+              <>
+                <Circle x={cx} y={cy - sp(12)} radius={r7} fill="#fff" stroke="#8a5a2b" strokeWidth={1} />
+                <Text x={cx - sp(6)} y={cy - sp(17)} width={sp(12)} align="center" text={`${i + 1}`}
+                  fontSize={fs(9)} fontStyle="700" fill="#8a5a2b" />
+                <Text x={cx - textW / 2} y={cy - sp(2)} width={textW} align="center" text={room.name}
+                  fontSize={fs(12)} fontStyle="600" fill="#292929" wrap="none" ellipsis />
+                <Text x={cx - textW / 2} y={cy + sp(12)} width={textW} align="center"
+                  text={formatDims(room.width, room.height)}
+                  fontSize={fs(10)} fill="#888" wrap="none" ellipsis />
+              </>
+            )}
+          </Group>
+        );
+      })}
+    </>
+  );
+});
+
+export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeaturesChanged, onRoomSelect }) {
   const wrapRef = useRef(null);
   const stageRef = useRef(null);
   const furnitureLayerRef = useRef(null);
@@ -72,17 +258,23 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
   const [selectedId, setSelectedId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
   const [showFurniture, setShowFurniture] = useState(true);
+  const [hoveredRoom, setHoveredRoom] = useState(null);
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
 
   useEffect(() => { setFeatures(stage?.features || []); setSelectedId(null); }, [stage]);
 
   // Attach the resize/rotate Transformer to whichever shape is currently selected.
+  // Deliberately not keyed on `features` — the node's live drag/transform state
+  // lives in Konva itself, not in that array, so reattaching on every commit
+  // (which gives `features` a new reference) only produced a visible snap
+  // right after releasing a drag, with no actual benefit.
   useEffect(() => {
     const tr = trRef.current;
     if (!tr) return;
     const node = selectedId ? shapeRefs.current[selectedId] : null;
     tr.nodes(node ? [node] : []);
     tr.getLayer()?.batchDraw();
-  }, [selectedId, features, showFurniture]);
+  }, [selectedId, showFurniture]);
 
   useEffect(() => {
     if (!wrapRef.current) return;
@@ -345,133 +537,8 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
             </Layer>
 
             <Layer>
-              {/* Top dimension ladder */}
-              {topLadderSegments.map((seg, i) => {
-                const x1 = sx_(seg.start), x2 = sx_(seg.end);
-                const y = MARGIN_TOP + TITLE_H - 10;
-                return (
-                  <Group key={`top-${i}`}>
-                    <Line points={[x1, y, x2, y]} stroke="#9a9a9a" strokeWidth={1} />
-                    <Line points={[x1, y - 3, x1, y + 3]} stroke="#9a9a9a" strokeWidth={1} />
-                    <Line points={[x2, y - 3, x2, y + 3]} stroke="#9a9a9a" strokeWidth={1} />
-                    <Text x={Math.min(x1, x2)} y={y - sp(16)} width={Math.abs(x2 - x1)} align="center"
-                      text={seg.label} fontSize={fs(topLadderSegments.length > 1 ? 9 : 11)} fill="#777" />
-                  </Group>
-                );
-              })}
-
-              {/* Side dimension ladder */}
-              {sideLadderSegments.map((seg, i) => {
-                const y1 = sideRy(seg.start), y2 = sideRy(seg.end);
-                const ymin = Math.min(y1, y2), ymax = Math.max(y1, y2);
-                const x = MARGIN_LEFT - 10;
-                return (
-                  <Group key={`side-${i}`}>
-                    <Line points={[x, ymin, x, ymax]} stroke="#9a9a9a" strokeWidth={1} />
-                    <Line points={[x - 3, ymin, x + 3, ymin]} stroke="#9a9a9a" strokeWidth={1} />
-                    <Line points={[x - 3, ymax, x + 3, ymax]} stroke="#9a9a9a" strokeWidth={1} />
-                    <Text x={x - sp(42)} y={(ymin + ymax) / 2 - sp(6)} width={sp(30)} align="center"
-                      text={seg.label} fontSize={fs(10)} fill="#777" />
-                  </Group>
-                );
-              })}
-
-              {/* Rooms (painted largest-first so smaller additions layer visibly on top) */}
-              {roomsByArea.map((room) => {
-                const r = rectScreen(room.x, room.y, room.width, room.height);
-                return <Rect key={`r-${room.id}`} x={r.x} y={r.y} width={r.width} height={r.height}
-                  fill={room.color} stroke="#00000014" strokeWidth={1} />;
-              })}
-
-              {/* Walls */}
-              {stage.walls.map((wall) => {
-                const p1 = pt(wall.x1, wall.y1), p2 = pt(wall.x2, wall.y2);
-                return (
-                  <Line key={`w-${wall.id}`}
-                    points={[p1.x, p1.y, p2.x, p2.y]}
-                    stroke={wall.wall_type === "new" ? "#c0392b" : "#2b2b2b"}
-                    strokeWidth={Math.max(2, (wall.thickness_in || 4.5) * scale * 0.5)}
-                    dash={wall.wall_type === "new" ? [8, 5] : undefined}
-                    lineCap="square"
-                  />
-                );
-              })}
-
-              {/* Openings — offset_in is always measured along the wall starting at (x1,y1),
-                  in whichever direction the wall was actually drawn toward (x2,y2). The
-                  resulting rect is computed in plan space, then mapped to screen once. */}
-              {stage.walls.flatMap((wall) => (wall.openings || []).map((op) => {
-                const horizontal = wall.y1 === wall.y2;
-                const isDoor = op.type === "door" || op.type === "garage_door";
-                const color = isDoor ? "#ffffff" : "#bfe3ff";
-                const thick = Math.max(3 / scale, (wall.thickness_in || 4.5) * 0.6);
-                let x, y, w, h;
-                if (horizontal) {
-                  const dir = wall.x2 >= wall.x1 ? 1 : -1;
-                  const p1v = wall.x1 + dir * op.offset_in;
-                  const p2v = wall.x1 + dir * (op.offset_in + op.width_in);
-                  x = Math.min(p1v, p2v);
-                  y = wall.y1 - thick / 2;
-                  w = Math.abs(p2v - p1v);
-                  h = thick;
-                } else {
-                  const dir = wall.y2 >= wall.y1 ? 1 : -1;
-                  const p1v = wall.y1 + dir * op.offset_in;
-                  const p2v = wall.y1 + dir * (op.offset_in + op.width_in);
-                  x = wall.x1 - thick / 2;
-                  y = Math.min(p1v, p2v);
-                  w = thick;
-                  h = Math.abs(p2v - p1v);
-                }
-                const r = rectScreen(x, y, w, h);
-                return <Rect key={`op-${op.id}`} x={r.x} y={r.y} width={r.width} height={r.height}
-                  fill={color} stroke="#666" strokeWidth={0.6} />;
-              }))}
-
-              {/* Room labels, centered within the room — if a smaller room visually overlaps
-                  part of this room (e.g. a deepened side room painted on top), center within
-                  whatever's left of this room's own footprint instead. */}
-              {stage.rooms.map((room, i) => {
-                const r = rectScreen(room.x, room.y, room.width, room.height);
-                const compact = r.width < 92 || r.height < 38;
-                const cornerX = room.x + 2, cornerY = room.y + 2;
-                const covering = stage.rooms.find((rm) =>
-                  rm.id !== room.id && rm.width * rm.height < room.width * room.height &&
-                  rm.x <= cornerX && rm.x + rm.width >= cornerX && rm.y <= cornerY && rm.y + rm.height > cornerY
-                );
-                let box = r;
-                if (covering) {
-                  const adjY = Math.max(room.y, covering.y + covering.height);
-                  const adjH = Math.max(1, room.y + room.height - adjY);
-                  box = rectScreen(room.x, adjY, room.width, adjH);
-                }
-                const cx = box.x + box.width / 2;
-                const cy = box.y + box.height / 2;
-                const textW = Math.max(40, Math.min(box.width - 10, 160));
-                const r7 = sp(7);
-                return (
-                  <Group key={`lbl-${room.id}`} listening={false}>
-                    {compact ? (
-                      <>
-                        <Circle x={cx} y={cy} radius={r7} fill="#fff" stroke="#8a5a2b" strokeWidth={1} />
-                        <Text x={cx - sp(6)} y={cy - sp(5)} width={sp(12)} align="center" text={`${i + 1}`}
-                          fontSize={fs(9)} fontStyle="700" fill="#8a5a2b" />
-                      </>
-                    ) : (
-                      <>
-                        <Circle x={cx} y={cy - sp(12)} radius={r7} fill="#fff" stroke="#8a5a2b" strokeWidth={1} />
-                        <Text x={cx - sp(6)} y={cy - sp(17)} width={sp(12)} align="center" text={`${i + 1}`}
-                          fontSize={fs(9)} fontStyle="700" fill="#8a5a2b" />
-                        <Text x={cx - textW / 2} y={cy - sp(2)} width={textW} align="center" text={room.name}
-                          fontSize={fs(12)} fontStyle="600" fill="#292929" wrap="none" ellipsis />
-                        <Text x={cx - textW / 2} y={cy + sp(12)} width={textW} align="center"
-                          text={formatDims(room.width, room.height)}
-                          fontSize={fs(10)} fill="#888" wrap="none" ellipsis />
-                      </>
-                    )}
-                  </Group>
-                );
-              })}
+              <StaticPlanLayer stage={stage} scale={scale} fontScale={fontScale} landscape={landscape}
+                onRoomSelect={onRoomSelect} setHoveredRoom={setHoveredRoom} setHoverPos={setHoverPos} />
             </Layer>
 
             <Layer ref={furnitureLayerRef} visible={showFurniture}>
@@ -553,12 +620,15 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
                 )} />
             </Layer>
           </Stage>
+          <RoomHoverCard room={hoveredRoom} x={hoverPos.x + 14} y={hoverPos.y + 14} />
         </div>
 
         <div className="floorplan-legend">
           <span><i style={{ background: "#2b2b2b" }} /> existing wall</span>
           <span><i style={{ background: "#c0392b" }} /> new wall (planned)</span>
+          <span><i style={{ background: "#b08a55" }} /> framed wall</span>
           <span><i style={{ background: "#fff", border: "1px solid #666" }} /> door</span>
+          <span><i style={{ background: "#e8d9b8", border: "1px solid #666" }} /> folding door</span>
           <span><i style={{ background: "#bfe3ff", border: "1px solid #666" }} /> window</span>
         </div>
 

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, TransformControls, Text } from "@react-three/drei";
 import { api } from "../api";
+import RoomHoverCard from "./RoomHoverCard";
 
 // Camera prop positioning alone doesn't orient the camera — point it at the
 // scene explicitly on mount so there's no blank first frame.
@@ -31,6 +32,8 @@ const FEATURE_COLORS = {
   water_filtration: "#3b7bb2",
   electric_panel: "#d9822b",
   acoustic_treatment: "#9b59b6",
+  shower: "#5fb3c9",
+  mini_split: "#2f9e44",
 };
 
 const PALETTE = [
@@ -40,11 +43,14 @@ const PALETTE = [
   { type: "kid_zone", label: "Kid Play Zone", w: 70, h: 70 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
+  { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
   { type: "appliance", label: "Washer/Dryer", w: 30, h: 20 },
   { type: "water_filtration", label: "Water Filtration", w: 20, h: 20 },
   { type: "shelving", label: "Storage Racking", w: 15, h: 60 },
   { type: "electric_panel", label: "Electric Sub Panel", w: 15, h: 20 },
   { type: "acoustic_treatment", label: "Acoustic Panel", w: 40, h: 8 },
+  { type: "boiler", label: "Boiler", w: 20, h: 20 },
+  { type: "mini_split", label: "Mini-split", w: 14, h: 6 },
 ];
 
 const CEILING_H = 8; // ft
@@ -79,9 +85,14 @@ function wallSegments(wall) {
   });
 }
 
-function Wall({ wall }) {
+// Memoized — walls only change when the stage's own wall data changes, not
+// when furniture is dragged elsewhere in the scene. Without this, every
+// furniture commit re-rendered every wall and forced R3F to recreate their
+// BufferGeometry (changed args array reference) for no actual reason.
+const Wall = memo(function Wall({ wall }) {
   const thick = wall.thickness_in || 4.5;
-  const color = wall.wall_type === "new" ? "#c98a7a" : "#d8d3c7";
+  const framed = wall.build_status === "framed" || wall.build_status === "complete";
+  const color = framed ? "#c9a876" : wall.wall_type === "new" ? "#c98a7a" : "#d8d3c7";
   return wallSegments(wall).map((seg, i) => {
     const horizontal = seg.y1 === seg.y2;
     const len = horizontal ? Math.abs(seg.x2 - seg.x1) : Math.abs(seg.y2 - seg.y1);
@@ -96,10 +107,10 @@ function Wall({ wall }) {
       </mesh>
     );
   });
-}
+});
 
 // Static glass pane filling a window/egress-window opening.
-function WindowPane({ wall, opening }) {
+const WindowPane = memo(function WindowPane({ wall, opening }) {
   const horizontal = wall.y1 === wall.y2;
   const dir = horizontal ? (wall.x2 >= wall.x1 ? 1 : -1) : (wall.y2 >= wall.y1 ? 1 : -1);
   const start = opening.offset_in, end = opening.offset_in + opening.width_in;
@@ -115,7 +126,7 @@ function WindowPane({ wall, opening }) {
       <meshStandardMaterial color="#bfe3ff" opacity={0.45} transparent />
     </mesh>
   );
-}
+});
 
 // A door panel hinged at the start of its opening; click to swing it open.
 // The hinge group always animates rotation.y from 0 (closed) -> swing angle
@@ -124,9 +135,9 @@ function WindowPane({ wall, opening }) {
 // both horizontal and vertical walls (a group-baseline-rotation approach here
 // previously got silently overwritten by the animation each frame on vertical
 // walls, leaving those doors closed in the wrong pose).
-function Door({ wall, opening, doorId, openSet, onToggle }) {
+const Door = memo(function Door({ wall, opening, doorId, open, onToggle }) {
   const groupRef = useRef();
-  const targetAngle = openSet.has(doorId) ? Math.PI * 0.42 : 0;
+  const targetAngle = open ? Math.PI * 0.42 : 0;
 
   useFrame(() => {
     if (!groupRef.current) return;
@@ -153,15 +164,14 @@ function Door({ wall, opening, doorId, openSet, onToggle }) {
       </mesh>
     </group>
   );
-}
+});
 
 // A sliding (pocket/bypass) panel — used for wide double-door openings where
 // a hinged swing doesn't make sense. Slides along the wall's own direction
 // instead of rotating.
-function SlidingDoor({ wall, opening, doorId, openSet, onToggle }) {
+const SlidingDoor = memo(function SlidingDoor({ wall, opening, doorId, open, onToggle }) {
   const panelRef = useRef();
   const slideRef = useRef(0);
-  const open = openSet.has(doorId);
 
   const horizontal = wall.y1 === wall.y2;
   const dir = horizontal ? (wall.x2 >= wall.x1 ? 1 : -1) : (wall.y2 >= wall.y1 ? 1 : -1);
@@ -198,20 +208,82 @@ function SlidingDoor({ wall, opening, doorId, openSet, onToggle }) {
       </mesh>
     </group>
   );
-}
+});
 
-function RoomFloor({ room, onPointerMissed }) {
+// A folding (bifold) door — two half-width leaves hinged at opposite ends of
+// the opening, folding inward in a mirrored "V" when open and meeting flush
+// in the middle when closed. Used for the Utility Room door (airflow).
+const FoldingDoor = memo(function FoldingDoor({ wall, opening, doorId, open, onToggle }) {
+  const leafARef = useRef();
+  const leafBRef = useRef();
+  const targetAngle = open ? Math.PI * 0.42 : 0;
+
+  useFrame(() => {
+    if (leafARef.current) {
+      const cur = leafARef.current.rotation.y;
+      leafARef.current.rotation.y = cur + (targetAngle - cur) * 0.15;
+    }
+    if (leafBRef.current) {
+      const cur = leafBRef.current.rotation.y;
+      leafBRef.current.rotation.y = cur + (-targetAngle - cur) * 0.15;
+    }
+  });
+
+  const horizontal = wall.y1 === wall.y2;
+  const dir = horizontal ? (wall.x2 >= wall.x1 ? 1 : -1) : (wall.y2 >= wall.y1 ? 1 : -1);
+  const hingeAlong = opening.offset_in;
+  const hx = horizontal ? wall.x1 + dir * hingeAlong : wall.x1;
+  const hz = horizontal ? wall.y1 : wall.y1 + dir * hingeAlong;
+  const doorH = 6.7, doorW = IN(opening.width_in), doorT = 0.1, leafW = doorW / 2;
+  const dx = horizontal ? dir : 0;
+  const dz = horizontal ? 0 : dir;
+  const panelRotY = horizontal ? 0 : Math.PI / 2;
+  const endX = hx + (horizontal ? dir * opening.width_in : 0);
+  const endZ = horizontal ? hz : hz + dir * opening.width_in;
+  const midX = IN((hx + endX) / 2), midZ = IN((hz + endZ) / 2);
+
+  return (
+    <group onClick={(e) => { e.stopPropagation(); onToggle(doorId); }}>
+      {/* Static hitbox spanning the whole opening — the leaves themselves rotate
+          away from this screen position once open, so without this there'd be
+          nothing stable left to click to close the door again. */}
+      <mesh position={[midX, doorH / 2, midZ]} visible={false}>
+        <boxGeometry args={[horizontal ? doorW : doorT * 6, doorH, horizontal ? doorT * 6 : doorW]} />
+      </mesh>
+      <group ref={leafARef} position={[IN(hx), 0, IN(hz)]}>
+        <mesh position={[(dx * leafW) / 2, doorH / 2, (dz * leafW) / 2]} rotation={[0, panelRotY, 0]} castShadow>
+          <boxGeometry args={[leafW, doorH, doorT]} />
+          <meshStandardMaterial color="#8a5a3a" />
+        </mesh>
+      </group>
+      <group ref={leafBRef} position={[IN(endX), 0, IN(endZ)]}>
+        <mesh position={[(-dx * leafW) / 2, doorH / 2, (-dz * leafW) / 2]} rotation={[0, panelRotY, 0]} castShadow>
+          <boxGeometry args={[leafW, doorH, doorT]} />
+          <meshStandardMaterial color="#8a5a3a" />
+        </mesh>
+      </group>
+    </group>
+  );
+});
+
+const RoomFloor = memo(function RoomFloor({ room, onPointerMissed, onRoomSelect, onRoomHover, onRoomUnhover }) {
   const w = IN(room.width), d = IN(room.height);
   const cx = IN(room.x) + w / 2, cz = IN(room.y) + d / 2;
   return (
-    <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow onPointerMissed={onPointerMissed}>
+    // Clicking the floor directly (as opposed to missing everything) still
+    // needs to clear any selected furniture — onPointerMissed here is the
+    // same "deselect" callback the parent already uses for empty clicks.
+    <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow onPointerMissed={onPointerMissed}
+      onClick={(e) => { e.stopPropagation(); onPointerMissed?.(); onRoomSelect?.(room); }}
+      onPointerMove={(e) => onRoomHover?.(room, e)}
+      onPointerOut={() => onRoomUnhover?.(room)}>
       <planeGeometry args={[w, d]} />
       <meshStandardMaterial color={room.color} />
     </mesh>
   );
-}
+});
 
-function RoomLabel({ room }) {
+const RoomLabel = memo(function RoomLabel({ room }) {
   const cx = IN(room.x) + IN(room.width) / 2, cz = IN(room.y) + IN(room.height) / 2;
   return (
     <Text position={[cx, 0.05, cz]} rotation={[-Math.PI / 2, 0, 0]} fontSize={0.9}
@@ -219,10 +291,10 @@ function RoomLabel({ room }) {
       {room.name}
     </Text>
   );
-}
+});
 
 // Structural beam + supporting pole, if the plan has a "pole" feature.
-function BeamAndPole({ pole, maxYIn }) {
+const BeamAndPole = memo(function BeamAndPole({ pole, maxYIn }) {
   if (!pole) return null;
   const x = IN(pole.x);
   return (
@@ -237,7 +309,7 @@ function BeamAndPole({ pole, maxYIn }) {
       </mesh>
     </group>
   );
-}
+});
 
 // Low-poly, recognizable-silhouette furniture — not photoreal, just "a chair is a chair".
 function FurnitureMesh({ type, w, h }) {
@@ -293,12 +365,34 @@ function FurnitureMesh({ type, w, h }) {
       return <mesh position={[0, 4.5, 0]} castShadow><boxGeometry args={[w, h, 0.2]} /><meshStandardMaterial color={color} /></mesh>;
     case "acoustic_treatment":
       return <mesh position={[0, 4, 0]} castShadow><boxGeometry args={[w, 3.5, h]} /><meshStandardMaterial color={color} opacity={0.85} transparent /></mesh>;
+    case "boiler":
+      return <mesh position={[0, 2.2, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) / 2, Math.min(w, h) / 2, 4.4, 16]} /><meshStandardMaterial color={color} /></mesh>;
+    case "shower":
+      return (
+        <group>
+          <mesh position={[0, 0.05, 0]} receiveShadow><boxGeometry args={[w, 0.1, h]} /><meshStandardMaterial color="#cfd8dc" /></mesh>
+          <mesh position={[0, 3.5, 0]} castShadow>
+            <boxGeometry args={[w, 7, h]} /><meshStandardMaterial color={color} opacity={0.3} transparent />
+          </mesh>
+          <mesh position={[0, 6.6, -h / 2 + IN(3)]} castShadow><cylinderGeometry args={[0.15, 0.15, 0.4, 10]} /><meshStandardMaterial color="#999" /></mesh>
+        </group>
+      );
+    case "mini_split":
+      return (
+        <group position={[0, 6.6, 0]}>
+          <mesh castShadow><boxGeometry args={[w, h, IN(8)]} /><meshStandardMaterial color={color} /></mesh>
+        </group>
+      );
     default:
       return <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[w, 1.8, h]} /><meshStandardMaterial color={color} /></mesh>;
   }
 }
 
-function Furniture({ feature, selected, onSelect, orbitRef, onCommit }) {
+// Memoized — dragging one piece of furniture replaces only that feature's
+// object in the `features` array (see commitTransform below), so every other
+// Furniture instance still receives the exact same `feature` reference and
+// can skip re-rendering entirely once `onSelect` is stabilized too.
+const Furniture = memo(function Furniture({ feature, selected, onSelect, orbitRef, onCommit }) {
   const groupRef = useRef();
   const wIn = feature.width || 20, hIn = feature.height || 20;
   const w = IN(wIn), h = IN(hIn);
@@ -319,16 +413,39 @@ function Furniture({ feature, selected, onSelect, orbitRef, onCommit }) {
       <FurnitureMesh type={feature.type} w={w} h={h} />
     </group>
   );
-}
+});
 
-export default function FloorPlan3D({ stage, stageId, onFeaturesChanged }) {
+export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomSelect }) {
   const [features, setFeatures] = useState(stage?.features || []);
   const [selectedId, setSelectedId] = useState(null);
   const [mode, setMode] = useState("translate");
   const [openDoors, setOpenDoors] = useState(new Set());
   const [orbitEnabled, setOrbitEnabled] = useState(true);
+  const [hoveredRoom, setHoveredRoom] = useState(null);
+  const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const groupRefs = useRef({});
   const orbitRef = useRef();
+  const wrapRef = useRef(null);
+
+  // Stable across renders (useCallback + functional setState) so the memoized
+  // RoomFloor/Door/SlidingDoor/FoldingDoor components below can actually bail
+  // out when a sibling piece of furniture moves, instead of re-rendering (and
+  // recreating their BufferGeometry) just because these callback props got a
+  // new reference.
+  const deselect = useCallback(() => setSelectedId(null), []);
+  const handleRoomHover = useCallback((room, e) => {
+    setHoveredRoom(room);
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (rect) setHoverPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  }, []);
+  const handleRoomUnhover = useCallback((room) => setHoveredRoom((r) => (r?.id === room.id ? null : r)), []);
+  const toggleDoor = useCallback((id) => {
+    setOpenDoors((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => { setFeatures(stage?.features || []); setSelectedId(null); }, [stage]);
 
@@ -341,9 +458,11 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged }) {
     const list = [];
     for (const wall of stage?.walls || []) {
       for (const op of wall.openings || []) {
-        if (op.type === "door" || op.type === "garage_door") {
+        if (op.type === "folding_door") {
+          list.push({ wall, opening: op, id: op.id, kind: "folding" });
+        } else if (op.type === "door" || op.type === "garage_door") {
           // Wide (double-door) openings slide instead of swinging on a hinge.
-          list.push({ wall, opening: op, id: op.id, sliding: op.width_in >= 48 });
+          list.push({ wall, opening: op, id: op.id, kind: op.width_in >= 48 ? "sliding" : "hinged" });
         }
       }
     }
@@ -359,18 +478,10 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged }) {
     return list;
   }, [stage]);
 
-  const toggleDoor = (id) => {
-    setOpenDoors((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const handleSelect = (id, ref) => {
+  const handleSelect = useCallback((id, ref) => {
     setSelectedId(id);
     groupRefs.current[id] = ref;
-  };
+  }, []);
 
   const commitTransform = async () => {
     const ref = groupRefs.current[selectedId];
@@ -464,25 +575,28 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged }) {
       </div>
 
       <div className="editor-main">
-        <div className="editor-canvas-wrap view-fit">
+        <div className="editor-canvas-wrap view-fit" ref={wrapRef}>
           <Canvas shadows camera={{ position: [centerX + IN(maxX) * 0.9, IN(maxY) * 0.55, centerZ + IN(maxY) * 0.75], fov: 45 }}>
             <CameraRig target={[centerX, 1.5, centerZ]} />
             <ambientLight intensity={0.7} />
             <directionalLight position={[centerX + 20, 25, centerZ - 10]} intensity={0.9} castShadow />
             <mesh position={[centerX, -0.05, centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow
-              onPointerMissed={() => setSelectedId(null)}>
+              onPointerMissed={deselect}>
               <planeGeometry args={[IN(maxX) + 6, IN(maxY) + 6]} />
               <meshStandardMaterial color="#f2efe6" />
             </mesh>
 
-            {stage.rooms.map((room) => <RoomFloor key={`f-${room.id}`} room={room} onPointerMissed={() => setSelectedId(null)} />)}
+            {stage.rooms.map((room) => (
+              <RoomFloor key={`f-${room.id}`} room={room} onPointerMissed={deselect}
+                onRoomSelect={onRoomSelect} onRoomHover={handleRoomHover} onRoomUnhover={handleRoomUnhover} />
+            ))}
             {stage.rooms.map((room) => <RoomLabel key={`l-${room.id}`} room={room} />)}
             {stage.walls.map((wall) => <Wall key={`w-${wall.id}`} wall={wall} />)}
             {doors.map((d) => {
-              const DoorComp = d.sliding ? SlidingDoor : Door;
+              const DoorComp = d.kind === "folding" ? FoldingDoor : d.kind === "sliding" ? SlidingDoor : Door;
               return (
                 <DoorComp key={`d-${d.id}`} wall={d.wall} opening={d.opening} doorId={d.id}
-                  openSet={openDoors} onToggle={toggleDoor} />
+                  open={openDoors.has(d.id)} onToggle={toggleDoor} />
               );
             })}
             {windows.map((win) => <WindowPane key={`win-${win.id}`} wall={win.wall} opening={win.opening} />)}
@@ -510,6 +624,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged }) {
             <OrbitControls ref={orbitRef} enabled={orbitEnabled} target={[centerX, 1.5, centerZ]}
               maxPolarAngle={Math.PI / 2.05} />
           </Canvas>
+          <RoomHoverCard room={hoveredRoom} x={hoverPos.x + 14} y={hoverPos.y + 14} />
         </div>
       </div>
     </div>
