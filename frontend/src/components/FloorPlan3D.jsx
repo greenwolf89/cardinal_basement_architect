@@ -1,8 +1,55 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, TransformControls, Text } from "@react-three/drei";
+import { OrbitControls, TransformControls, Text, Environment, ContactShadows } from "@react-three/drei";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
+import { ACESFilmicToneMapping, DoubleSide, Plane, Vector2, Vector3 } from "three";
 import { api } from "../api";
 import RoomHoverCard from "./RoomHoverCard";
+import LayoutPresets from "./LayoutPresets";
+
+// Reusable PBR material presets, keyed by material family — the single lever
+// that makes the low-poly geometry actually look like brass/glass/marble/tile
+// instead of flat-colored boxes. `physical` ones use MeshPhysicalMaterial for
+// clearcoat (glazed tile, polished stone) or real glass transmission;
+// everything else is a tuned MeshStandardMaterial.
+const MAT = {
+  brass: { metalness: 1, roughness: 0.32, color: "#b08d57" },
+  chrome: { metalness: 1, roughness: 0.18, color: "#d6dadd" },
+  glass: { physical: true, transmission: 0.92, roughness: 0.05, thickness: 0.08, ior: 1.45, transparent: true, opacity: 0.4, color: "#eaf6f2" },
+  porcelain: { physical: true, clearcoat: 0.9, clearcoatRoughness: 0.08, roughness: 0.15, color: "#f5f3ee" },
+  marble: { physical: true, clearcoat: 0.6, clearcoatRoughness: 0.25, roughness: 0.3, color: "#f1ede6" },
+  zellige: { physical: true, clearcoat: 0.85, clearcoatRoughness: 0.12, roughness: 0.28, color: "#1f7a5c" },
+  tadelakt: { roughness: 0.78, color: "#d8c6a0" },
+  cedar: { roughness: 0.55, color: "#8a5a3a" },
+  concrete: { roughness: 0.92, color: "#c9c4ba" },
+  fabric: { roughness: 0.88 },
+  wood: { roughness: 0.5, color: "#7a5a3a" },
+};
+
+function Mat({ kind, color, ...rest }) {
+  const m = MAT[kind] || {};
+  const finalColor = color || m.color || "#888";
+  if (m.physical) {
+    return (
+      <meshPhysicalMaterial color={finalColor} roughness={m.roughness} metalness={m.metalness || 0}
+        clearcoat={m.clearcoat} clearcoatRoughness={m.clearcoatRoughness}
+        transmission={m.transmission} thickness={m.thickness} ior={m.ior}
+        transparent={m.transparent} opacity={m.opacity ?? 1} {...rest} />
+    );
+  }
+  return <meshStandardMaterial color={finalColor} roughness={m.roughness ?? 0.6} metalness={m.metalness ?? 0} {...rest} />;
+}
+
+// Per-room floor finish — keyword-matched against the room name so new rooms
+// get a sensible default without needing an explicit material field.
+function floorMaterialFor(room) {
+  const name = room.name.toLowerCase();
+  if (name.includes("wet hammam") || name.includes("shower")) return { kind: "zellige" };
+  if (name.includes("dry zone") || name.includes("bathroom")) return { kind: "tadelakt", color: "#e3d2ad" };
+  if (name.includes("utility") || name.includes("storage") || name.includes("garage")) return { kind: "concrete" };
+  if (name.includes("studio")) return { kind: "wood", color: "#6b4a30" };
+  return { kind: "wood", color: room.color };
+}
 
 // Camera prop positioning alone doesn't orient the camera — point it at the
 // scene explicitly on mount so there's no blank first frame.
@@ -12,6 +59,64 @@ function CameraRig({ target }) {
     camera.lookAt(...target);
     camera.updateProjectionMatrix();
   }, [camera, target]);
+  return null;
+}
+
+const GROUND_PLANE = new Plane(new Vector3(0, 1, 0), 0);
+const GRID_FT = 3 / 12; // 3" grid snap, matching the 2D editor
+
+// Lives inside <Canvas> (needs camera/raycaster from useThree) and drives the
+// direct click-and-drag-to-move interaction — replacing the old
+// grab-the-gizmo-arrow translate flow, which was the main source of "hard to
+// drag" complaints. Pointer-down on a furniture piece (in Move mode) seeds
+// `dragStateRef`; this component tracks window-level pointermove/up so the
+// drag keeps working even once the cursor leaves the piece's own screen
+// footprint, mutating the object's position imperatively (no React re-render
+// mid-drag, same perf pattern as the door-swing animations) with a live grid
+// snap, and reports the final position back via `onDragEnd` on release.
+function DragController({ groupRefs, dragStateRef, setOrbitEnabled, onDragEnd }) {
+  const { camera, raycaster, gl } = useThree();
+
+  useEffect(() => {
+    const groundPoint = (clientX, clientY) => {
+      const rect = gl.domElement.getBoundingClientRect();
+      const ndc = new Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const pt = new Vector3();
+      return raycaster.ray.intersectPlane(GROUND_PLANE, pt) ? pt : null;
+    };
+
+    const handleMove = (e) => {
+      const drag = dragStateRef.current;
+      if (!drag) return;
+      if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      const pt = groundPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      const ref = groupRefs.current[drag.id];
+      if (!ref?.current) return;
+      ref.current.position.x = Math.round((pt.x + drag.offsetX) / GRID_FT) * GRID_FT;
+      ref.current.position.z = Math.round((pt.z + drag.offsetZ) / GRID_FT) * GRID_FT;
+    };
+
+    const handleUp = () => {
+      const drag = dragStateRef.current;
+      setOrbitEnabled(true);
+      if (drag?.moved) onDragEnd(drag.id);
+      dragStateRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [camera, raycaster, gl, groupRefs, dragStateRef, onDragEnd, setOrbitEnabled]);
+
   return null;
 }
 
@@ -34,6 +139,9 @@ const FEATURE_COLORS = {
   acoustic_treatment: "#9b59b6",
   shower: "#5fb3c9",
   mini_split: "#2f9e44",
+  heated_bench: "#e8e2d8",
+  kurna_basin: "#c9a876",
+  mirror: "#aad4e8",
 };
 
 const PALETTE = [
@@ -44,6 +152,9 @@ const PALETTE = [
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
+  { type: "heated_bench", label: "Heated Bench", w: 72, h: 18 },
+  { type: "kurna_basin", label: "Kurna Basin", w: 12, h: 12 },
+  { type: "mirror", label: "Mirror", w: 20, h: 3 },
   { type: "appliance", label: "Washer/Dryer", w: 30, h: 20 },
   { type: "water_filtration", label: "Water Filtration", w: 20, h: 20 },
   { type: "shelving", label: "Storage Racking", w: 15, h: 60 },
@@ -103,7 +214,7 @@ const Wall = memo(function Wall({ wall }) {
     return (
       <mesh key={i} position={[cx, CEILING_H / 2, cz]} castShadow receiveShadow>
         <boxGeometry args={[w, CEILING_H, d]} />
-        <meshStandardMaterial color={color} />
+        <Mat kind={framed ? "wood" : "concrete"} color={color} />
       </mesh>
     );
   });
@@ -160,7 +271,7 @@ const Door = memo(function Door({ wall, opening, doorId, open, onToggle }) {
       onClick={(e) => { e.stopPropagation(); onToggle(doorId); }}>
       <mesh position={[dx * doorW / 2, doorH / 2, dz * doorW / 2]} rotation={[0, panelRotY, 0]} castShadow>
         <boxGeometry args={[doorW, doorH, doorT]} />
-        <meshStandardMaterial color="#8a5a3a" />
+        <Mat kind="cedar" />
       </mesh>
     </group>
   );
@@ -199,12 +310,16 @@ const SlidingDoor = memo(function SlidingDoor({ wall, opening, doorId, open, onT
 
   return (
     <group onClick={(e) => { e.stopPropagation(); onToggle(doorId); }}>
-      <mesh position={[baseX, doorH / 2, baseZ]} visible={false}>
+      {/* R3F excludes visible=false meshes from raycasting entirely, so this
+          has to stay "visible" (just fully transparent) to actually catch
+          clicks once the door has retracted away from its closed position. */}
+      <mesh position={[baseX, doorH / 2, baseZ]}>
         <boxGeometry args={[horizontal ? doorW : doorT * 6, doorH, horizontal ? doorT * 6 : doorW]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <mesh ref={panelRef} position={[baseX, doorH / 2, baseZ]} rotation={[0, panelRotY, 0]} castShadow>
         <boxGeometry args={[doorW, doorH, doorT]} />
-        <meshStandardMaterial color="#8a5a3a" />
+        <Mat kind="cedar" />
       </mesh>
     </group>
   );
@@ -247,21 +362,85 @@ const FoldingDoor = memo(function FoldingDoor({ wall, opening, doorId, open, onT
       {/* Static hitbox spanning the whole opening — the leaves themselves rotate
           away from this screen position once open, so without this there'd be
           nothing stable left to click to close the door again. */}
-      <mesh position={[midX, doorH / 2, midZ]} visible={false}>
+      <mesh position={[midX, doorH / 2, midZ]}>
         <boxGeometry args={[horizontal ? doorW : doorT * 6, doorH, horizontal ? doorT * 6 : doorW]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       <group ref={leafARef} position={[IN(hx), 0, IN(hz)]}>
         <mesh position={[(dx * leafW) / 2, doorH / 2, (dz * leafW) / 2]} rotation={[0, panelRotY, 0]} castShadow>
           <boxGeometry args={[leafW, doorH, doorT]} />
-          <meshStandardMaterial color="#8a5a3a" />
+          <Mat kind="cedar" />
         </mesh>
       </group>
       <group ref={leafBRef} position={[IN(endX), 0, IN(endZ)]}>
         <mesh position={[(-dx * leafW) / 2, doorH / 2, (-dz * leafW) / 2]} rotation={[0, panelRotY, 0]} castShadow>
           <boxGeometry args={[leafW, doorH, doorT]} />
-          <meshStandardMaterial color="#8a5a3a" />
+          <Mat kind="cedar" />
         </mesh>
       </group>
+    </group>
+  );
+});
+
+// The Moorish arch + steam glass partition between the Dry Zone and Wet
+// Hammam Zone: two fixed glass panels flanking a hinged glass door, under an
+// arched header (a half-cylinder silhouette — the cheap, well-known low-poly
+// trick for an arch shape, consistent with the rest of this file's primitive
+// furniture). Clicking the hinged section opens/closes it, same as the other
+// door types.
+const SteamGlassEnclosure = memo(function SteamGlassEnclosure({ wall, opening, doorId, open, onToggle }) {
+  const doorRef = useRef();
+  const targetAngle = open ? Math.PI * 0.4 : 0;
+
+  useFrame(() => {
+    if (!doorRef.current) return;
+    const cur = doorRef.current.rotation.y;
+    doorRef.current.rotation.y = cur + (targetAngle - cur) * 0.15;
+  });
+
+  const horizontal = wall.y1 === wall.y2;
+  const dir = horizontal ? (wall.x2 >= wall.x1 ? 1 : -1) : (wall.y2 >= wall.y1 ? 1 : -1);
+  const hx = horizontal ? wall.x1 + dir * opening.offset_in : wall.x1;
+  const hz = horizontal ? wall.y1 : wall.y1 + dir * opening.offset_in;
+  const dx = horizontal ? dir : 0;
+  const dz = horizontal ? 0 : dir;
+  const panelRotY = horizontal ? 0 : Math.PI / 2;
+
+  const fullW = IN(opening.width_in);
+  const thick = IN(wall.thickness_in || 4.5);
+  const springline = 6.9; // ft — glass height, below the arched header
+  const panelT = 0.06;
+  const doorW = Math.min(2.6, fullW * 0.32);
+  const fixedW = (fullW - doorW) / 2;
+  const doorHingeOffset = fixedW;
+
+  return (
+    <group>
+      <mesh position={[IN(hx) + (dx * fixedW) / 2, springline / 2, IN(hz) + (dz * fixedW) / 2]}
+        rotation={[0, panelRotY, 0]} castShadow>
+        <boxGeometry args={[fixedW, springline, panelT]} />
+        <Mat kind="glass" />
+      </mesh>
+
+      <group ref={doorRef} position={[IN(hx) + dx * doorHingeOffset, 0, IN(hz) + dz * doorHingeOffset]}
+        onClick={(e) => { e.stopPropagation(); onToggle(doorId); }}>
+        <mesh position={[(dx * doorW) / 2, springline / 2, (dz * doorW) / 2]} rotation={[0, panelRotY, 0]} castShadow>
+          <boxGeometry args={[doorW, springline, panelT]} />
+          <Mat kind="glass" />
+        </mesh>
+      </group>
+
+      <mesh position={[IN(hx) + dx * (fixedW + doorW + fixedW / 2), springline / 2, IN(hz) + dz * (fixedW + doorW + fixedW / 2)]}
+        rotation={[0, panelRotY, 0]} castShadow>
+        <boxGeometry args={[fixedW, springline, panelT]} />
+        <Mat kind="glass" />
+      </mesh>
+
+      <mesh position={[IN(hx) + (dx * fullW) / 2, springline, IN(hz) + (dz * fullW) / 2]}
+        rotation={horizontal ? [Math.PI / 2, 0, 0] : [Math.PI / 2, Math.PI / 2, 0]} castShadow>
+        <cylinderGeometry args={[fullW / 2, fullW / 2, thick, 24, 1, true, 0, Math.PI]} />
+        <meshStandardMaterial color="#d8c6a0" roughness={0.85} side={DoubleSide} />
+      </mesh>
     </group>
   );
 });
@@ -269,6 +448,7 @@ const FoldingDoor = memo(function FoldingDoor({ wall, opening, doorId, open, onT
 const RoomFloor = memo(function RoomFloor({ room, onPointerMissed, onRoomSelect, onRoomHover, onRoomUnhover }) {
   const w = IN(room.width), d = IN(room.height);
   const cx = IN(room.x) + w / 2, cz = IN(room.y) + d / 2;
+  const floorMat = floorMaterialFor(room);
   return (
     // Clicking the floor directly (as opposed to missing everything) still
     // needs to clear any selected furniture — onPointerMissed here is the
@@ -278,7 +458,7 @@ const RoomFloor = memo(function RoomFloor({ room, onPointerMissed, onRoomSelect,
       onPointerMove={(e) => onRoomHover?.(room, e)}
       onPointerOut={() => onRoomUnhover?.(room)}>
       <planeGeometry args={[w, d]} />
-      <meshStandardMaterial color={room.color} />
+      <Mat kind={floorMat.kind} color={floorMat.color} />
     </mesh>
   );
 });
@@ -319,72 +499,93 @@ function FurnitureMesh({ type, w, h }) {
     case "sleeper_sofa":
       return (
         <group>
-          <mesh position={[0, 0.7, 0]} castShadow><boxGeometry args={[w, 1.4, h]} /><meshStandardMaterial color={color} /></mesh>
+          <mesh position={[0, 0.7, 0]} castShadow><boxGeometry args={[w, 1.4, h]} /><Mat kind="fabric" color={color} /></mesh>
           <mesh position={[0, 1.5, -h / 2 + IN(4)]} castShadow>
-            <boxGeometry args={[w, 1.2, IN(8)]} /><meshStandardMaterial color={color} />
+            <boxGeometry args={[w, 1.2, IN(8)]} /><Mat kind="fabric" color={color} />
           </mesh>
         </group>
       );
     case "toilet":
+      // Wall-hung — floating off the floor with a concealed in-wall tank, per the Hammam plan.
       return (
-        <group>
-          <mesh position={[0, 0.7, h / 4]} castShadow><boxGeometry args={[w * 0.8, 1.4, h * 0.5]} /><meshStandardMaterial color={color} /></mesh>
-          <mesh position={[0, 1.6, -h / 3]} castShadow><boxGeometry args={[w * 0.7, 1.2, h * 0.3]} /><meshStandardMaterial color={color} /></mesh>
+        <group position={[0, 1.4, 0]}>
+          <mesh position={[0, -0.7, h / 4]} castShadow><boxGeometry args={[w * 0.8, 1.2, h * 0.55]} /><Mat kind="porcelain" /></mesh>
+          <mesh position={[0, 0.1, -h / 3]} castShadow><boxGeometry args={[w * 0.7, 1.1, h * 0.3]} /><Mat kind="porcelain" /></mesh>
         </group>
       );
     case "sink":
+      // Floating carved cedar vanity + hammered brass vessel sink.
       return (
         <group>
-          <mesh position={[0, 1.4, 0]} castShadow><boxGeometry args={[w, 0.15, h]} /><meshStandardMaterial color={color} /></mesh>
-          <mesh position={[-w / 2 + 0.1, 0.7, -h / 2 + 0.1]} castShadow><boxGeometry args={[0.15, 1.4, 0.15]} /><meshStandardMaterial color="#999" /></mesh>
+          <mesh position={[0, 2.6, 0]} castShadow><boxGeometry args={[w, 0.2, h]} /><Mat kind="cedar" /></mesh>
+          <mesh position={[0, 2.95, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) * 0.38, Math.min(w, h) * 0.42, 0.45, 16]} /><Mat kind="brass" /></mesh>
+          <mesh position={[0, 3.6, -h / 2 + 0.1]} castShadow><cylinderGeometry args={[0.04, 0.04, 1.2, 8]} /><Mat kind="brass" /></mesh>
+        </group>
+      );
+    case "mirror":
+      return (
+        <group position={[0, 5.2, 0]}>
+          <mesh castShadow><boxGeometry args={[w, 2.6, 0.08]} /><Mat kind="brass" /></mesh>
+          <mesh position={[0, 0, 0.05]}><boxGeometry args={[w * 0.85, 2.3, 0.02]} /><Mat kind="chrome" roughness={0.05} /></mesh>
+        </group>
+      );
+    case "heated_bench":
+      return <mesh position={[0, 0.75, 0]} castShadow receiveShadow><boxGeometry args={[w, 1.5, h]} /><Mat kind="marble" /></mesh>;
+    case "kurna_basin":
+      return (
+        <group>
+          <mesh position={[0, 1.1, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) / 2, Math.min(w, h) / 2.3, 1.0, 16]} /><Mat kind="marble" color="#ece6da" /></mesh>
+          <mesh position={[0, 1.75, 0]} castShadow><cylinderGeometry args={[0.05, 0.05, 0.5, 8]} /><Mat kind="brass" /></mesh>
         </group>
       );
     case "appliance":
-      return <mesh position={[0, 1.4, 0]} castShadow><boxGeometry args={[w, 2.8, h]} /><meshStandardMaterial color={color} /></mesh>;
+      return <mesh position={[0, 1.4, 0]} castShadow><boxGeometry args={[w, 2.8, h]} /><Mat kind="chrome" color={color} metalness={0.3} /></mesh>;
     case "water_filtration":
-      return <mesh position={[0, 1.6, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) / 2, Math.min(w, h) / 2, 3.2, 16]} /><meshStandardMaterial color={color} /></mesh>;
+      return <mesh position={[0, 1.6, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) / 2, Math.min(w, h) / 2, 3.2, 16]} /><Mat kind="chrome" color={color} metalness={0.2} /></mesh>;
     case "shelving":
     case "built_in_shelving":
       return (
         <group>
           {[0.3, 2.2, 4.1, 6.0].map((y, i) => (
-            <mesh key={i} position={[0, y, 0]} castShadow><boxGeometry args={[w, 0.12, h]} /><meshStandardMaterial color={color} /></mesh>
+            <mesh key={i} position={[0, y, 0]} castShadow><boxGeometry args={[w, 0.12, h]} /><Mat kind="wood" color={color} /></mesh>
           ))}
-          <mesh position={[-w / 2 + 0.06, 3.2, 0]} castShadow><boxGeometry args={[0.12, 6.4, h]} /><meshStandardMaterial color={color} /></mesh>
-          <mesh position={[w / 2 - 0.06, 3.2, 0]} castShadow><boxGeometry args={[0.12, 6.4, h]} /><meshStandardMaterial color={color} /></mesh>
+          <mesh position={[-w / 2 + 0.06, 3.2, 0]} castShadow><boxGeometry args={[0.12, 6.4, h]} /><Mat kind="wood" color={color} /></mesh>
+          <mesh position={[w / 2 - 0.06, 3.2, 0]} castShadow><boxGeometry args={[0.12, 6.4, h]} /><Mat kind="wood" color={color} /></mesh>
         </group>
       );
     case "kid_zone":
       return (
         <group>
-          <mesh position={[0, 0.1, 0]} receiveShadow><boxGeometry args={[w, 0.2, h]} /><meshStandardMaterial color={color} /></mesh>
-          <mesh position={[w / 2 - IN(10), 0.9, h / 2 - IN(10)]} castShadow><boxGeometry args={[IN(18), 1.6, IN(14)]} /><meshStandardMaterial color="#c0392b" /></mesh>
+          <mesh position={[0, 0.1, 0]} receiveShadow><boxGeometry args={[w, 0.2, h]} /><Mat kind="fabric" color={color} /></mesh>
+          <mesh position={[w / 2 - IN(10), 0.9, h / 2 - IN(10)]} castShadow><boxGeometry args={[IN(18), 1.6, IN(14)]} /><Mat kind="fabric" color="#c0392b" /></mesh>
         </group>
       );
     case "electric_panel":
-      return <mesh position={[0, 4.5, 0]} castShadow><boxGeometry args={[w, h, 0.2]} /><meshStandardMaterial color={color} /></mesh>;
+      return <mesh position={[0, 4.5, 0]} castShadow><boxGeometry args={[w, h, 0.2]} /><Mat kind="chrome" color={color} metalness={0.4} /></mesh>;
     case "acoustic_treatment":
-      return <mesh position={[0, 4, 0]} castShadow><boxGeometry args={[w, 3.5, h]} /><meshStandardMaterial color={color} opacity={0.85} transparent /></mesh>;
+      return <mesh position={[0, 4, 0]} castShadow><boxGeometry args={[w, 3.5, h]} /><Mat kind="fabric" color={color} /></mesh>;
     case "boiler":
-      return <mesh position={[0, 2.2, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) / 2, Math.min(w, h) / 2, 4.4, 16]} /><meshStandardMaterial color={color} /></mesh>;
+      return <mesh position={[0, 2.2, 0]} castShadow><cylinderGeometry args={[Math.min(w, h) / 2, Math.min(w, h) / 2, 4.4, 16]} /><Mat kind="chrome" color={color} metalness={0.25} /></mesh>;
     case "shower":
+      // Side-wall rain head + handheld wand over a standing zone — no enclosure here;
+      // the actual steam glass partition is the room-dividing arch (SteamGlassEnclosure).
       return (
         <group>
-          <mesh position={[0, 0.05, 0]} receiveShadow><boxGeometry args={[w, 0.1, h]} /><meshStandardMaterial color="#cfd8dc" /></mesh>
-          <mesh position={[0, 3.5, 0]} castShadow>
-            <boxGeometry args={[w, 7, h]} /><meshStandardMaterial color={color} opacity={0.3} transparent />
+          <mesh position={[0, 0.05, 0]} receiveShadow><boxGeometry args={[w, 0.1, h]} /><Mat kind="marble" color="#cfd8dc" /></mesh>
+          <mesh position={[-w / 2 + 0.1, 4.2, 0]} castShadow><boxGeometry args={[0.15, 5, 0.15]} /><Mat kind="brass" /></mesh>
+          <mesh position={[-w / 2 + 0.1, 6.7, h / 2 - IN(6)]} rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.35, 0.35, 0.1, 20]} /><Mat kind="brass" />
           </mesh>
-          <mesh position={[0, 6.6, -h / 2 + IN(3)]} castShadow><cylinderGeometry args={[0.15, 0.15, 0.4, 10]} /><meshStandardMaterial color="#999" /></mesh>
         </group>
       );
     case "mini_split":
       return (
         <group position={[0, 6.6, 0]}>
-          <mesh castShadow><boxGeometry args={[w, h, IN(8)]} /><meshStandardMaterial color={color} /></mesh>
+          <mesh castShadow><boxGeometry args={[w, h, IN(8)]} /><meshStandardMaterial color={color} roughness={0.4} /></mesh>
         </group>
       );
     default:
-      return <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[w, 1.8, h]} /><meshStandardMaterial color={color} /></mesh>;
+      return <mesh position={[0, 0.9, 0]} castShadow><boxGeometry args={[w, 1.8, h]} /><meshStandardMaterial color={color} roughness={0.6} /></mesh>;
   }
 }
 
@@ -392,17 +593,26 @@ function FurnitureMesh({ type, w, h }) {
 // object in the `features` array (see commitTransform below), so every other
 // Furniture instance still receives the exact same `feature` reference and
 // can skip re-rendering entirely once `onSelect` is stabilized too.
-const Furniture = memo(function Furniture({ feature, selected, onSelect, orbitRef, onCommit }) {
+const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, onDragStart }) {
   const groupRef = useRef();
   const wIn = feature.width || 20, hIn = feature.height || 20;
   const w = IN(wIn), h = IN(hIn);
   const cx = IN(feature.x) + w / 2, cz = IN(feature.y) + h / 2;
+  const hitboxH = Math.max(2, Math.min(6.5, IN(Math.max(wIn, hIn))));
 
   return (
     <group ref={groupRef} position={[cx, 0, cz]} rotation={[0, -((feature.rotation || 0) * Math.PI) / 180, 0]}
-      onClick={(e) => { e.stopPropagation(); onSelect(feature.id, groupRef); }}>
-      <mesh visible={false}>
-        <boxGeometry args={[w, 0.05, h]} />
+      onClick={(e) => { e.stopPropagation(); onSelect(feature.id, groupRef); }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onSelect(feature.id, groupRef);
+        if (mode === "translate") onDragStart(feature.id, groupRef, e);
+      }}>
+      {/* Invisible hitbox — taller than the old paper-thin version so steep
+          camera angles still land a click on the piece instead of missing it. */}
+      <mesh position={[0, hitboxH / 2, 0]}>
+        <boxGeometry args={[w, hitboxH, h]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       {selected && (
         <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -426,6 +636,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const groupRefs = useRef({});
   const orbitRef = useRef();
   const wrapRef = useRef(null);
+  const dragStateRef = useRef(null);
 
   // Stable across renders (useCallback + functional setState) so the memoized
   // RoomFloor/Door/SlidingDoor/FoldingDoor components below can actually bail
@@ -460,6 +671,8 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
       for (const op of wall.openings || []) {
         if (op.type === "folding_door") {
           list.push({ wall, opening: op, id: op.id, kind: "folding" });
+        } else if (op.type === "arch_glass") {
+          list.push({ wall, opening: op, id: op.id, kind: "arch_glass" });
         } else if (op.type === "door" || op.type === "garage_door") {
           // Wide (double-door) openings slide instead of swinging on a hinge.
           list.push({ wall, opening: op, id: op.id, kind: op.width_in >= 48 ? "sliding" : "hinged" });
@@ -482,6 +695,32 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
     setSelectedId(id);
     groupRefs.current[id] = ref;
   }, []);
+
+  // Seeds the drag state on pointer-down; DragController (inside the Canvas,
+  // where camera/raycaster are available) does the actual tracking and calls
+  // commitPosition on release.
+  const handleDragStart = useCallback((id, groupRef, e) => {
+    dragStateRef.current = {
+      id,
+      startX: e.clientX, startY: e.clientY, moved: false,
+      offsetX: groupRef.current.position.x - e.point.x,
+      offsetZ: groupRef.current.position.z - e.point.z,
+    };
+    setOrbitEnabled(false);
+  }, []);
+
+  const commitPosition = async (id) => {
+    const ref = groupRefs.current[id];
+    const feature = features.find((f) => f.id === id);
+    if (!ref?.current || !feature) return;
+    const widthIn = feature.width || 20, heightIn = feature.height || 20;
+    const xIn = ref.current.position.x * 12 - widthIn / 2;
+    const yIn = ref.current.position.z * 12 - heightIn / 2;
+    const room_name = findRoomAt(stage.rooms, xIn, yIn) || feature.room_name;
+    const patch = { x: xIn, y: yIn, room_name };
+    setFeatures((fs) => fs.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+    await api.patchFeature(id, patch);
+  };
 
   const commitTransform = async () => {
     const ref = groupRefs.current[selectedId];
@@ -563,7 +802,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
         })}
         <button className="palette-delete" disabled={!selectedId} onClick={deleteSelected}>Delete selected</button>
         <button className="palette-rotate" disabled={!selectedId} onClick={duplicateSelected}>Duplicate</button>
-        <p className="editor-hint">Click furniture to select. Click a door to open/close it.</p>
+        <p className="editor-hint">Click and drag furniture to move it (snaps to a 3" grid). Click a door to open/close it.</p>
 
         <div className="editor-divider" />
         <div className="view-mode-toggle">
@@ -572,19 +811,36 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
           <button className={mode === "scale" ? "active" : ""} onClick={() => setMode("scale")}>Resize</button>
         </div>
         <p className="editor-hint">Drag to orbit, scroll to zoom, right-drag to pan.</p>
+
+        <LayoutPresets stageId={stageId} onLoaded={onFeaturesChanged} />
       </div>
 
       <div className="editor-main">
         <div className="editor-canvas-wrap view-fit" ref={wrapRef}>
-          <Canvas shadows camera={{ position: [centerX + IN(maxX) * 0.9, IN(maxY) * 0.55, centerZ + IN(maxY) * 0.75], fov: 45 }}>
+          <Canvas shadows gl={{ toneMapping: ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+            camera={{ position: [centerX + IN(maxX) * 0.9, IN(maxY) * 0.55, centerZ + IN(maxY) * 0.75], fov: 45 }}>
             <CameraRig target={[centerX, 1.5, centerZ]} />
-            <ambientLight intensity={0.7} />
-            <directionalLight position={[centerX + 20, 25, centerZ - 10]} intensity={0.9} castShadow />
+            {/* Hemisphere fill (sky/ground split) + a tuned directional key light —
+                replaces the old flat ambient+single-light pair so surfaces actually
+                read as 3D instead of uniformly lit. */}
+            <hemisphereLight args={["#cfe3f0", "#786a50", 0.55]} />
+            <directionalLight
+              position={[centerX + 20, 26, centerZ - 12]} intensity={1.3} castShadow
+              shadow-mapSize={[2048, 2048]}
+              shadow-camera-left={-IN(maxX)}
+              shadow-camera-right={IN(maxX)}
+              shadow-camera-top={IN(maxY)}
+              shadow-camera-bottom={-IN(maxY)}
+              shadow-bias={-0.0004}
+            />
+            <Environment preset="apartment" environmentIntensity={0.6} />
             <mesh position={[centerX, -0.05, centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow
               onPointerMissed={deselect}>
               <planeGeometry args={[IN(maxX) + 6, IN(maxY) + 6]} />
-              <meshStandardMaterial color="#f2efe6" />
+              <meshStandardMaterial color="#f2efe6" roughness={0.9} />
             </mesh>
+            <ContactShadows position={[centerX, 0, centerZ]} opacity={0.45} scale={Math.max(IN(maxX), IN(maxY)) * 2.2}
+              blur={2} far={6} resolution={512} />
 
             {stage.rooms.map((room) => (
               <RoomFloor key={`f-${room.id}`} room={room} onPointerMissed={deselect}
@@ -593,7 +849,9 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
             {stage.rooms.map((room) => <RoomLabel key={`l-${room.id}`} room={room} />)}
             {stage.walls.map((wall) => <Wall key={`w-${wall.id}`} wall={wall} />)}
             {doors.map((d) => {
-              const DoorComp = d.kind === "folding" ? FoldingDoor : d.kind === "sliding" ? SlidingDoor : Door;
+              const DoorComp = d.kind === "folding" ? FoldingDoor
+                : d.kind === "arch_glass" ? SteamGlassEnclosure
+                : d.kind === "sliding" ? SlidingDoor : Door;
               return (
                 <DoorComp key={`d-${d.id}`} wall={d.wall} opening={d.opening} doorId={d.id}
                   open={openDoors.has(d.id)} onToggle={toggleDoor} />
@@ -604,15 +862,16 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
 
             {nonPoleFeatures.map((f) => (
               <Furniture key={f.id} feature={f} selected={selectedId === f.id}
-                onSelect={handleSelect} orbitRef={orbitRef} />
+                onSelect={handleSelect} mode={mode} onDragStart={handleDragStart} />
             ))}
 
-            {selectedId && selectedRef?.current && (
+            {/* Move is handled entirely by DragController's direct click-and-drag below —
+                no gizmo for translate at all, since grabbing its thin arrows was the main
+                "hard to drag" complaint. Rotate/resize keep the gizmo (not the pain point). */}
+            {selectedId && selectedRef?.current && mode !== "translate" && (
               <TransformControls
                 object={selectedRef.current}
                 mode={mode}
-                // translate/scale: constrained to the floor plane (X/Z) — never move or
-                // resize vertically. rotate: Y-axis only — furniture only turns, doesn't tip over.
                 showX={mode !== "rotate"}
                 showY={mode === "rotate"}
                 showZ={mode !== "rotate"}
@@ -620,9 +879,17 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
                 onMouseUp={() => { setOrbitEnabled(true); commitTransform(); }}
               />
             )}
+            <DragController groupRefs={groupRefs} dragStateRef={dragStateRef}
+              setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} />
 
             <OrbitControls ref={orbitRef} enabled={orbitEnabled} target={[centerX, 1.5, centerZ]}
               maxPolarAngle={Math.PI / 2.05} />
+
+            {/* Conservative post-processing — bloom makes brass/glass highlights and
+                warm lighting pop; no SSAO/DOF, keeping frame cost low. */}
+            <EffectComposer multisampling={0}>
+              <Bloom luminanceThreshold={0.75} luminanceSmoothing={0.2} intensity={0.35} mipmapBlur />
+            </EffectComposer>
           </Canvas>
           <RoomHoverCard room={hoveredRoom} x={hoverPos.x + 14} y={hoverPos.y + 14} />
         </div>

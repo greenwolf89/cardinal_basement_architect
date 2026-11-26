@@ -3,6 +3,7 @@ import { Stage, Layer, Rect, Line, Circle, Text, Group, Transformer } from "reac
 import { api } from "../api";
 import { formatFeetInches, formatDims } from "../format";
 import RoomHoverCard from "./RoomHoverCard";
+import LayoutPresets from "./LayoutPresets";
 
 const FEATURE_COLORS = {
   pole: "#8a5a2b",
@@ -25,6 +26,9 @@ const FEATURE_COLORS = {
   acoustic_treatment: "#9b59b6",
   shower: "#5fb3c9",
   mini_split: "#2f9e44",
+  heated_bench: "#e8e2d8",
+  kurna_basin: "#c9a876",
+  mirror: "#aad4e8",
 };
 
 const PALETTE = [
@@ -35,6 +39,9 @@ const PALETTE = [
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
+  { type: "heated_bench", label: "Heated Bench", w: 72, h: 18 },
+  { type: "kurna_basin", label: "Kurna Basin", w: 12, h: 12 },
+  { type: "mirror", label: "Mirror", w: 20, h: 3 },
   { type: "appliance", label: "Washer/Dryer", w: 30, h: 20 },
   { type: "water_filtration", label: "Water Filtration", w: 20, h: 20 },
   { type: "shelving", label: "Storage Racking", w: 15, h: 60 },
@@ -171,7 +178,9 @@ const StaticPlanLayer = memo(function StaticPlanLayer({ stage, scale, fontScale,
       {stage.walls.flatMap((wall) => (wall.openings || []).map((op) => {
         const horizontal = wall.y1 === wall.y2;
         const isDoor = op.type === "door" || op.type === "garage_door";
-        const color = op.type === "folding_door" ? "#e8d9b8" : isDoor ? "#ffffff" : "#bfe3ff";
+        const color = op.type === "folding_door" ? "#e8d9b8"
+          : op.type === "arch_glass" ? "#bfe8d8"
+          : isDoor ? "#ffffff" : "#bfe3ff";
         const thick = Math.max(3 / scale, (wall.thickness_in || 4.5) * 0.6);
         let x, y, w, h;
         if (horizontal) {
@@ -524,6 +533,8 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
         </label>
         <button className="export-btn" onClick={() => exportPng(false)}>Export Blueprint (PNG)</button>
         <button className="export-btn" onClick={() => exportPng(true)}>Export with Furniture (PNG)</button>
+
+        <LayoutPresets stageId={stageId} onLoaded={onFeaturesChanged} />
       </div>
 
       <div className="editor-main">
@@ -629,6 +640,7 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
           <span><i style={{ background: "#b08a55" }} /> framed wall</span>
           <span><i style={{ background: "#fff", border: "1px solid #666" }} /> door</span>
           <span><i style={{ background: "#e8d9b8", border: "1px solid #666" }} /> folding door</span>
+          <span><i style={{ background: "#bfe8d8", border: "1px solid #666" }} /> arch + steam glass</span>
           <span><i style={{ background: "#bfe3ff", border: "1px solid #666" }} /> window</span>
         </div>
 

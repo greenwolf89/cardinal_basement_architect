@@ -346,6 +346,21 @@ li.status-done .checklist-text strong { text-decoration: line-through; opacity: 
   color: var(--accent);
 }
 .preset-btn:hover { background: var(--accent); color: #fff; }
+.preset-btn:disabled { opacity: 0.5; cursor: default; }
+
+.layout-presets { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+.layout-presets h3 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.preset-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.preset-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-bg);
+  color: var(--text);
+  font-size: 12.5px;
+}
 
 .room-hover-card {
   position: absolute;
