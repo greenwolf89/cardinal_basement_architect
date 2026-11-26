@@ -29,15 +29,19 @@ const FEATURE_COLORS = {
   heated_bench: "#e8e2d8",
   kurna_basin: "#c9a876",
   mirror: "#aad4e8",
-  projection_screen: "#2b2b2b",
+  projection_screen: "#e8e6e0",
+  sectional_sofa: "#5b4bd6",
+  projector: "#2b2b2b",
 };
 
 const PALETTE = [
   { type: "sofa", label: "Sofa", w: 80, h: 34 },
   { type: "sleeper_sofa", label: "Sleeper Sofa", w: 78, h: 34 },
+  { type: "sectional_sofa", label: "Sectional Sofa", w: 100, h: 40 },
   { type: "built_in_shelving", label: "Built-in Shelving", w: 60, h: 12 },
   { type: "kid_zone", label: "Kid Play Zone (Loft)", w: 72, h: 96 },
   { type: "projection_screen", label: "Projection Screen", w: 80, h: 6 },
+  { type: "projector", label: "Ceiling Projector", w: 14, h: 10 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
@@ -62,6 +66,28 @@ const TITLE_H = 34;
 function findRoomAt(rooms, x, y) {
   const hit = rooms.find((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height);
   return hit ? hit.name : null;
+}
+
+// Keyword hints for where a palette item should land when first added — without
+// this, every new piece defaulted to stage.rooms[0] (whichever room happens to
+// be first), which is how items ended up seeded into the Storage room by default.
+const DEFAULT_ROOM_HINTS = {
+  sofa: ["living", "family"], sleeper_sofa: ["living", "family"], sectional_sofa: ["living", "family"],
+  projection_screen: ["living", "family"], projector: ["living", "family"],
+  built_in_shelving: ["living", "family"], kid_zone: ["living", "family"], mini_split: ["living", "family"],
+  toilet: ["dry zone"], sink: ["dry zone"], mirror: ["dry zone"],
+  shower: ["wet hammam"], heated_bench: ["wet hammam"], kurna_basin: ["wet hammam"],
+  boiler: ["utility"], appliance: ["utility"],
+  water_filtration: ["storage"], shelving: ["storage"], electric_panel: ["storage"],
+  acoustic_treatment: ["studio"],
+};
+
+function pickDefaultRoom(rooms, type) {
+  for (const hint of DEFAULT_ROOM_HINTS[type] || []) {
+    const match = rooms.find((r) => r.name.toLowerCase().includes(hint));
+    if (match) return match;
+  }
+  return rooms[0];
 }
 
 function downloadDataUrl(dataUrl, filename) {
@@ -422,7 +448,7 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
       onFeaturesChanged?.();
       return;
     }
-    const room = stage.rooms[0];
+    const room = pickDefaultRoom(stage.rooms, item.type);
     const x = room ? room.x + 15 : 15;
     const y = room ? room.y + 15 : 15;
     const created = await api.createFeature({
@@ -650,7 +676,7 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
           <h3>Room Schedule</h3>
           <table>
             <thead>
-              <tr><th>#</th><th>Room</th><th>Dimensions</th><th>Notes</th></tr>
+              <tr><th>#</th><th>Room</th><th>Dimensions</th><th>Paint</th><th>Notes</th></tr>
             </thead>
             <tbody>
               {stage.rooms.map((room, i) => (
@@ -658,6 +684,7 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
                   <td>{i + 1}</td>
                   <td>{room.name}</td>
                   <td>{formatDims(room.width, room.height)}</td>
+                  <td><i className="paint-swatch-dot" style={{ background: room.paint_color || "#f2efe6" }} title={room.paint_color} /></td>
                   <td className="notes-cell">{room.notes}</td>
                 </tr>
               ))}

@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, TransformControls, Text, Environment, ContactShadows } from "@react-three/drei";
 import { EffectComposer, Bloom } from "@react-three/postprocessing";
-import { ACESFilmicToneMapping, DoubleSide, Plane, Vector2, Vector3 } from "three";
+import { ACESFilmicToneMapping, DoubleSide, Plane, Quaternion, Vector2, Vector3 } from "three";
 import { api } from "../api";
 import RoomHoverCard from "./RoomHoverCard";
 import LayoutPresets from "./LayoutPresets";
@@ -154,15 +154,19 @@ const FEATURE_COLORS = {
   heated_bench: "#e8e2d8",
   kurna_basin: "#c9a876",
   mirror: "#aad4e8",
-  projection_screen: "#2b2b2b",
+  projection_screen: "#e8e6e0",
+  sectional_sofa: "#5b4bd6",
+  projector: "#2b2b2b",
 };
 
 const PALETTE = [
   { type: "sofa", label: "Sofa", w: 80, h: 34 },
   { type: "sleeper_sofa", label: "Sleeper Sofa", w: 78, h: 34 },
+  { type: "sectional_sofa", label: "Sectional Sofa", w: 100, h: 40 },
   { type: "built_in_shelving", label: "Built-in Shelving", w: 60, h: 12 },
   { type: "kid_zone", label: "Kid Play Zone (Loft)", w: 72, h: 96 },
   { type: "projection_screen", label: "Projection Screen", w: 80, h: 6 },
+  { type: "projector", label: "Ceiling Projector", w: 14, h: 10 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
@@ -182,9 +186,35 @@ const CEILING_H = 8; // ft
 const BEAM_BOTTOM = 7; // ft — clearance under the beam that bisects the house
 const IN = (inches) => inches / 12; // inches -> feet
 
+function findRoomObjAt(rooms, x, y) {
+  return rooms.find((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) || null;
+}
+
 function findRoomAt(rooms, x, y) {
-  const hit = rooms.find((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height);
-  return hit ? hit.name : null;
+  return findRoomObjAt(rooms, x, y)?.name || null;
+}
+
+// Keyword hints for where a palette item should land when first added — without
+// this, every new piece defaulted to stage.rooms[0] (whichever room happens to
+// be first), which is how a sofa/projection screen ended up seeded into the
+// Storage & Water Filtration room instead of the Living/Family Room.
+const DEFAULT_ROOM_HINTS = {
+  sofa: ["living", "family"], sleeper_sofa: ["living", "family"], sectional_sofa: ["living", "family"],
+  projection_screen: ["living", "family"], projector: ["living", "family"],
+  built_in_shelving: ["living", "family"], kid_zone: ["living", "family"], mini_split: ["living", "family"],
+  toilet: ["dry zone"], sink: ["dry zone"], mirror: ["dry zone"],
+  shower: ["wet hammam"], heated_bench: ["wet hammam"], kurna_basin: ["wet hammam"],
+  boiler: ["utility"], appliance: ["utility"],
+  water_filtration: ["storage"], shelving: ["storage"], electric_panel: ["storage"],
+  acoustic_treatment: ["studio"],
+};
+
+function pickDefaultRoom(rooms, type) {
+  for (const hint of DEFAULT_ROOM_HINTS[type] || []) {
+    const match = rooms.find((r) => r.name.toLowerCase().includes(hint));
+    if (match) return match;
+  }
+  return rooms[0];
 }
 
 // Split a wall into its solid box segments, leaving gaps at each opening.
@@ -267,14 +297,22 @@ function clampToWalls(xIn, zIn, wIn, hIn, prevXIn, prevZIn, segments) {
   return { x, z };
 }
 
-// Memoized — walls only change when the stage's own wall data changes, not
-// when furniture is dragged elsewhere in the scene. Without this, every
+// Memoized — walls only change when the stage's own wall/room data changes,
+// not when furniture is dragged elsewhere in the scene. Without this, every
 // furniture commit re-rendered every wall and forced R3F to recreate their
 // BufferGeometry (changed args array reference) for no actual reason.
-const Wall = memo(function Wall({ wall }) {
+//
+// Paint: once a wall is actually framed, its two interior-facing sides each
+// get the adjacent room's `paint_color` (sampled a few inches off the
+// centerline on each side) via a 6-entry face-material array on the box —
+// BoxGeometry's default face/group order is [+x,-x,+y,-y,+z,-z], so only the
+// two large faces perpendicular to the wall's thickness axis carry paint; the
+// other four (top/bottom/end-caps) keep the structural color. A wall with no
+// room on a given side (an exterior wall) just keeps that side structural too.
+const Wall = memo(function Wall({ wall, rooms }) {
   const thick = wall.thickness_in || 4.5;
   const framed = wall.build_status === "framed" || wall.build_status === "complete";
-  const color = framed ? "#c9a876" : wall.wall_type === "new" ? "#c98a7a" : "#d8d3c7";
+  const structColor = framed ? "#c9a876" : wall.wall_type === "new" ? "#c98a7a" : "#d8d3c7";
   return wallSegments(wall).map((seg, i) => {
     const horizontal = seg.y1 === seg.y2;
     const len = horizontal ? Math.abs(seg.x2 - seg.x1) : Math.abs(seg.y2 - seg.y1);
@@ -282,10 +320,30 @@ const Wall = memo(function Wall({ wall }) {
     const cx = IN((seg.x1 + seg.x2) / 2), cz = IN((seg.y1 + seg.y2) / 2);
     const w = horizontal ? IN(len) : IN(thick);
     const d = horizontal ? IN(thick) : IN(len);
+
+    let posColor = structColor, negColor = structColor;
+    if (framed) {
+      const off = thick / 2 + 8;
+      if (horizontal) {
+        posColor = findRoomObjAt(rooms, cx * 12, seg.y1 + off)?.paint_color || structColor;
+        negColor = findRoomObjAt(rooms, cx * 12, seg.y1 - off)?.paint_color || structColor;
+      } else {
+        posColor = findRoomObjAt(rooms, seg.x1 + off, cz * 12)?.paint_color || structColor;
+        negColor = findRoomObjAt(rooms, seg.x1 - off, cz * 12)?.paint_color || structColor;
+      }
+    }
+    // [+x, -x, +y, -y, +z, -z]
+    const faceColors = horizontal
+      ? [structColor, structColor, structColor, structColor, posColor, negColor]
+      : [posColor, negColor, structColor, structColor, structColor, structColor];
+
     return (
       <mesh key={i} position={[cx, CEILING_H / 2, cz]} castShadow receiveShadow>
         <boxGeometry args={[w, CEILING_H, d]} />
-        <Mat kind={framed ? "wood" : "concrete"} color={color} />
+        {faceColors.map((c, idx) => (
+          <meshStandardMaterial key={idx} attach={`material-${idx}`} color={c}
+            roughness={c === structColor ? (framed ? 0.5 : 0.92) : 0.82} />
+        ))}
       </mesh>
     );
   });
@@ -589,11 +647,43 @@ function ProjectionScreenMesh({ w, deployed }) {
       </mesh>
       <mesh ref={screenRef} position={[0, topY, 0]}>
         <boxGeometry args={[w * 0.96, maxHeight, 0.03]} />
-        <meshStandardMaterial color="#1c1c1c" roughness={0.6} />
+        <meshStandardMaterial color="#f7f6f2" roughness={0.9} />
       </mesh>
     </group>
   );
 }
+
+// Translucent light-cone connecting a "projector" feature to a "projection_screen"
+// feature — narrow at the lens, widening to the screen, only shown while the
+// screen is deployed. Lives at the top level (not inside FurnitureMesh) since
+// it needs both features' positions at once, not just its own.
+const ProjectorBeam = memo(function ProjectorBeam({ projector, screen, deployed }) {
+  if (!projector || !screen || !deployed) return null;
+  const rot = (deg) => (-(deg || 0) * Math.PI) / 180;
+
+  const pw = IN(projector.width || 14), ph = IN(projector.height || 10);
+  const pCenter = new Vector3(IN(projector.x) + pw / 2, 6.7, IN(projector.y) + ph / 2);
+  const lensLocal = new Vector3(0, -ph * 0.05, ph / 2 + 0.15).applyAxisAngle(new Vector3(0, 1, 0), rot(projector.rotation));
+  const lensPos = pCenter.clone().add(lensLocal);
+
+  const sw = IN(screen.width || 80), sh = IN(screen.height || 6);
+  const sCenter = new Vector3(IN(screen.x) + sw / 2, CEILING_H - 0.4 - 2.5, IN(screen.y) + sh / 2);
+  const faceLocal = new Vector3(0, 0, 0.05).applyAxisAngle(new Vector3(0, 1, 0), rot(screen.rotation));
+  const targetPos = sCenter.clone().add(faceLocal);
+
+  const dir = new Vector3().subVectors(lensPos, targetPos);
+  const length = dir.length();
+  if (length < 0.1) return null;
+  const mid = new Vector3().addVectors(lensPos, targetPos).multiplyScalar(0.5);
+  const quat = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), dir.clone().normalize());
+
+  return (
+    <mesh position={mid} quaternion={quat}>
+      <coneGeometry args={[Math.min(sw, 10) * 0.42, length, 24, 1, true]} />
+      <meshBasicMaterial color="#fff6c8" transparent opacity={0.16} depthWrite={false} side={DoubleSide} />
+    </mesh>
+  );
+});
 
 // Kid play zone — a low-poly corner loft modeled on the Starship-01 plan:
 // an elevated deck with bulkhead railings + portholes, a ladder up one
@@ -693,6 +783,31 @@ function FurnitureMesh({ type, w, h, deployed }) {
           <mesh position={[0, 0.7, 0]} castShadow><boxGeometry args={[w, 1.4, h]} /><Mat kind="fabric" color={color} /></mesh>
           <mesh position={[0, 1.5, -h / 2 + IN(4)]} castShadow>
             <boxGeometry args={[w, 1.2, IN(8)]} /><Mat kind="fabric" color={color} />
+          </mesh>
+        </group>
+      );
+    case "sectional_sofa": {
+      // L-shaped: a main run (same seat+backrest as a plain sofa) plus a
+      // chaise section jutting out from one end, perpendicular to the run.
+      const chaiseW = h * 0.95, chaiseD = h * 0.9;
+      return (
+        <group>
+          <mesh position={[0, 0.7, 0]} castShadow><boxGeometry args={[w, 1.4, h]} /><Mat kind="fabric" color={color} /></mesh>
+          <mesh position={[0, 1.5, -h / 2 + IN(4)]} castShadow>
+            <boxGeometry args={[w, 1.2, IN(8)]} /><Mat kind="fabric" color={color} />
+          </mesh>
+          <mesh position={[w / 2 - chaiseW / 2, 0.65, h / 2 + chaiseD / 2]} castShadow>
+            <boxGeometry args={[chaiseW, 1.3, chaiseD]} /><Mat kind="fabric" color={color} />
+          </mesh>
+        </group>
+      );
+    }
+    case "projector":
+      return (
+        <group position={[0, 6.7, 0]}>
+          <mesh castShadow><boxGeometry args={[w, h * 0.65, h]} /><Mat kind="chrome" color="#2b2b2b" metalness={0.3} roughness={0.5} /></mesh>
+          <mesh position={[0, -h * 0.05, h / 2 + 0.12]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+            <cylinderGeometry args={[0.2, 0.22, 0.3, 16]} /><Mat kind="chrome" metalness={0.6} roughness={0.2} />
           </mesh>
         </group>
       );
@@ -863,6 +978,8 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const collisionSegments = useMemo(() => collectSolidWallSegments(stage?.walls), [stage]);
   const pole = useMemo(() => (stage?.features || []).find((f) => f.type === "pole"), [stage]);
   const nonPoleFeatures = features.filter((f) => f.type !== "pole");
+  const screenFeature = features.find((f) => f.type === "projection_screen");
+  const projectorFeature = features.find((f) => f.type === "projector");
 
   const doors = useMemo(() => {
     const list = [];
@@ -953,7 +1070,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
       onFeaturesChanged?.();
       return;
     }
-    const room = stage.rooms[0];
+    const room = pickDefaultRoom(stage.rooms, item.type);
     const x = room ? room.x + 15 : 15;
     const y = room ? room.y + 15 : 15;
     const created = await api.createFeature({
@@ -1049,7 +1166,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
                 onRoomSelect={onRoomSelect} onRoomHover={handleRoomHover} onRoomUnhover={handleRoomUnhover} />
             ))}
             {stage.rooms.map((room) => <RoomLabel key={`l-${room.id}`} room={room} />)}
-            {stage.walls.map((wall) => <Wall key={`w-${wall.id}`} wall={wall} />)}
+            {stage.walls.map((wall) => <Wall key={`w-${wall.id}`} wall={wall} rooms={stage.rooms} />)}
             {doors.map((d) => {
               const DoorComp = d.kind === "folding" ? FoldingDoor
                 : d.kind === "arch_glass" ? SteamGlassEnclosure
@@ -1061,6 +1178,8 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
             })}
             {windows.map((win) => <WindowPane key={`win-${win.id}`} wall={win.wall} opening={win.opening} />)}
             <BeamAndPole pole={pole} maxYIn={maxY} />
+            <ProjectorBeam projector={projectorFeature} screen={screenFeature}
+              deployed={!!screenFeature && deployedScreens.has(screenFeature.id)} />
 
             {nonPoleFeatures.map((f) => (
               <Furniture key={f.id} feature={f} selected={selectedId === f.id}

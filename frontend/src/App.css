@@ -424,6 +424,36 @@ li.status-done .checklist-text strong { text-decoration: line-through; opacity: 
 .room-detail-section ul { margin: 0; padding-left: 18px; font-size: 13px; }
 .room-detail-section li { margin-bottom: 3px; }
 
+.paint-palette-tabs { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
+.paint-palette-tabs button {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  color: var(--text);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.paint-palette-tabs button.active { opacity: 1; border-color: var(--accent); font-weight: 600; }
+.paint-swatch-row { display: flex; gap: 8px; }
+.paint-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+}
+.paint-swatch.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent); }
+.paint-swatch-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1px solid var(--border);
+}
+
 .bank-import { margin-top: 10px; }
 .bank-import-preview { margin-top: 10px; }
 .column-mapping { display: flex; gap: 16px; margin: 8px 0; font-size: 13px; }

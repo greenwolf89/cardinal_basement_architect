@@ -168,9 +168,9 @@ db.add(models.Opening(wall_id=band_north_wall.id, type="door", offset_in=265, wi
 db.commit()
 
 # ---------------- Features ----------------
-def feature(room_name, ftype, x, y, w=0, h=0, label=""):
+def feature(room_name, ftype, x, y, w=0, h=0, label="", rotation=0):
     db.add(models.Feature(stage_id=stage.id, room_name=room_name, type=ftype, x=x, y=y,
-                           width=w, height=h, label=label))
+                           width=w, height=h, label=label, rotation=rotation))
 
 feature("Storage & Water Filtration", "water_filtration", 15, 15, 20, 20, "Water filtration system")
 feature("Storage & Water Filtration", "shelving", 15, 60, 15, 150, "Storage racking")
@@ -210,9 +210,27 @@ feature("Dry Zone", "mirror", UTILITY_W + 74, DRY_ZONE_Y + 8, 16, 3,
 feature("Living / Family Room", "built_in_shelving", FULL_W - 14, BASEMENT_Y + 60, 12, 168,
         "Built-in shelving along the east wall (longest unbroken wall).")
 feature("Living / Family Room", "kid_zone", 15, BASEMENT_Y + BASEMENT_D - 95, 80, 80, "Kid play zone")
-feature("Living / Family Room", "sofa", 100, BASEMENT_Y + 60, 90, 34, "Family sofa")
-feature("Living / Family Room", "sleeper_sofa", 100, BASEMENT_Y + 120, 80, 34, "Sleeper sofa (guests)")
 feature("Living / Family Room", "mini_split", FULL_W - 30, BASEMENT_Y + 8, 16, 7, "Mini-split — 18,000 BTU")
+
+# Home-theater corner: the projection screen hangs from the structural beam
+# (DIVIDER_X=144, which runs the full depth of the building), rotated 90 deg
+# so its long edge runs parallel to the beam instead of across it. The
+# sectional sits west of the beam facing east toward it, the ceiling
+# projector sits between the two throwing its beam east across the room.
+# (Rotation convention for this app's furniture meshes: 0=backrest/back faces
+# north, 90=east, 180=south, 270=west — i.e. the open/forward side faces the
+# opposite compass direction.)
+_theater_cz = BASEMENT_Y + 145  # ~145" into the room from the north edge — shared depth for a straight sightline
+feature("Living / Family Room", "projection_screen", DIVIDER_X - 40, _theater_cz - 3, 80, 6,
+        "Projection screen — mounted to the beam, parallel to it", rotation=90)
+
+feature("Living / Family Room", "sectional_sofa", 35 - 50, _theater_cz - 20, 100, 40,
+        "Sectional sofa — faces the beam/projection screen", rotation=270)
+
+feature("Living / Family Room", "projector", 90 - 7, _theater_cz - 5, 14, 10,
+        "Ceiling projector — throws toward the beam-mounted screen", rotation=270)
+
+feature("Living / Family Room", "sleeper_sofa", 230, 543, 80, 34, "Sleeper sofa (guests)", rotation=90)
 
 db.commit()
 db.close()

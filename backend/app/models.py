@@ -31,6 +31,7 @@ class Room(Base):
     width = Column(Float)
     height = Column(Float)
     color = Column(String, default="#e8e2d4")
+    paint_color = Column(String, default="#f2efe6")  # interior wall paint, shown in the 3D view
     notes = Column(Text, default="")
 
     # Construction progress — manually set via the room detail panel, not

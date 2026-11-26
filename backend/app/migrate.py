@@ -18,6 +18,7 @@ NEW_COLUMNS = {
         ("progress_pct", "INTEGER DEFAULT 0"),
         ("status_label", "TEXT DEFAULT ''"),
         ("progress_note", "TEXT DEFAULT ''"),
+        ("paint_color", "TEXT DEFAULT '#f2efe6'"),
     ],
     "walls": [
         ("build_status", "TEXT DEFAULT 'planned'"),

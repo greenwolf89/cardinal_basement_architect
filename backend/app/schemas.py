@@ -49,6 +49,7 @@ class RoomBase(BaseModel):
     width: float
     height: float
     color: str = "#e8e2d4"
+    paint_color: str = "#f2efe6"
     notes: str = ""
     progress_pct: int = 0
     status_label: str = ""
@@ -66,6 +67,7 @@ class RoomUpdate(BaseModel):
     width: Optional[float] = None
     height: Optional[float] = None
     color: Optional[str] = None
+    paint_color: Optional[str] = None
     notes: Optional[str] = None
     progress_pct: Optional[int] = None
     status_label: Optional[str] = None
