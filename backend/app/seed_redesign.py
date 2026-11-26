@@ -7,13 +7,16 @@ Layout:
   Storage & Water Filtration (west). Pole sits 12' from the west wall and
   8' from the garage/band division line.
 - BAND (transition strip): a 4'x10' Utility Room (boiler, airflow via a
-  folding door) beside an 8'x10' full Bathroom (toilet, sink, walk-in
-  shower) — both extend 10' off the garage/band wall, well past the old
-  3'4" band depth. East of that, the rest of the band (what used to be a
-  walled-off storage nook under the stairs plus the garage-access platform)
-  is now one open Hallway / Stair Landing with no interior walls — it leads
-  straight down into the Living/Family Room and up the stairs to the main
-  house.
+  cedar folding door) beside an 8'x10' Moroccan Hammam bathroom — both
+  extend 10' off the garage/band wall, well past the old 3'4" band depth.
+  The bathroom is split into a Dry Zone (toilet, floating vanity + sink,
+  mirror — nearest the entry on the south wall) and a Wet Hammam Zone
+  (shower, heated marble bench, kurna basin — against the north wall),
+  separated by a Moorish arch + steam glass partition. East of that, the
+  rest of the band (what used to be a walled-off storage nook under the
+  stairs plus the garage-access platform) is now one open Hallway / Stair
+  Landing with no interior walls — it leads straight down into the
+  Living/Family Room and up the stairs to the main house.
 - BASEMENT (rear, 24'4.5" wide x 27'5" deep): Living / Family Room — built-in
   shelving on the east wall (longest unbroken wall), kid play zone in the
   back corner, family sofa + sleeper sofa, egress window on the west wall,
@@ -57,6 +60,8 @@ BATHROOM_W = 96  # 8'
 BATH_UTIL_W = UTILITY_W + BATHROOM_W  # 144" — lines up with the hallway starting here
 BATH_UTIL_DEPTH = 120  # 10' off the garage/band wall
 BATH_UTIL_BOTTOM = BAND_Y + BATH_UTIL_DEPTH  # 355
+WET_ZONE_DEPTH = 48  # 4' — per the Hammam plan: Rear Wet Hammam & Daily Shower Zone
+DRY_ZONE_Y = BAND_Y + WET_ZONE_DEPTH  # 283 — Dry Zone starts here, runs to BATH_UTIL_BOTTOM (6')
 
 # ---------------- Rooms ----------------
 rooms = [
@@ -66,9 +71,14 @@ rooms = [
      "Acoustic treatment on walls.",
      20, "Framing", "Garage divider wall framed (6\" stud wall)."),
     ("Utility Room", 0, BAND_Y, UTILITY_W, BATH_UTIL_DEPTH, "#dfe3e6",
-     "4'x10'. Boiler. Folding door into the Bathroom gives it airflow."),
-    ("Bathroom", UTILITY_W, BAND_Y, BATHROOM_W, BATH_UTIL_DEPTH, "#e3ecec",
-     "8'x10' full bath — toilet, sink, walk-in shower. Door in from the Living/Family Room."),
+     "4'x10'. Boiler. Cedar louvered bifold door into the Bathroom gives it airflow."),
+    ("Wet Hammam Zone", UTILITY_W, BAND_Y, BATHROOM_W, WET_ZONE_DEPTH, "#2e8b6e",
+     "4'x8' steam shower + hammam. Emerald zellige walls, heated marble bench, hand-carved "
+     "marble kurna basin. Separated from the Dry Zone by a Moorish arch + steam glass partition."),
+    ("Dry Zone", UTILITY_W, DRY_ZONE_Y, BATHROOM_W, BATH_UTIL_BOTTOM - DRY_ZONE_Y, "#ddc9a3",
+     "6'x8' — wall-hung toilet, floating carved cedar vanity with brass vessel sink, arched "
+     "Moroccan mirror. Sand Tadelakt plaster walls over Moroccan mosaic floor tile. "
+     "Door in from the Living/Family Room."),
     ("Hallway / Stair Landing", BATH_UTIL_W, BAND_Y, FULL_W - BATH_UTIL_W, BAND_D, "#f2f2e9",
      "Open — no interior walls. Connects the garage door, the stairs up to the main house, "
      "and the Living/Family Room below. Used to be split into a storage closet and a platform."),
@@ -107,12 +117,16 @@ west_wall = wall(0, TOTAL_D, 0, BASEMENT_Y, build_status="framed",
 
 # Band interior walls — Utility Room / Bathroom block, 10' deep off the garage/band wall.
 utility_bath_wall = wall(UTILITY_W, BAND_Y, UTILITY_W, BATH_UTIL_BOTTOM, "new",
-                          "Utility Room / Bathroom wall — folding door for boiler airflow.")
+                          "Utility Room / Bathroom wall — cedar louvered bifold door for boiler airflow.")
 bath_util_east_wall = wall(BATH_UTIL_W, BAND_Y, BATH_UTIL_W, BATH_UTIL_BOTTOM, "new",
                             "Bathroom / Hallway wall.")
 bath_util_south_wall = wall(0, BATH_UTIL_BOTTOM, BATH_UTIL_W, BATH_UTIL_BOTTOM, "new",
                              "Shared south wall for the Utility Room + Bathroom block. "
-                             "Door into the Bathroom from the Living/Family Room.")
+                             "Door into the Dry Zone from the Living/Family Room.")
+dry_wet_divider = wall(UTILITY_W, DRY_ZONE_Y, BATH_UTIL_W, DRY_ZONE_Y, "new",
+                       "Moorish arch framed down to ~82\"-84\" with a 3/8\" frameless tempered "
+                       "steam glass partition (two fixed panels + hinged door) between the Dry "
+                       "Zone and the Wet Hammam Zone.")
 
 band_north_wall = wall(0, BAND_Y, FULL_W, BAND_Y, "existing")
 # No walls at all east of x=144 in the band, and no wall at y=275 anywhere — the old
@@ -143,9 +157,12 @@ db.add(models.Opening(wall_id=divider_wall.id, type="door", offset_in=195, width
 db.add(models.Opening(wall_id=west_wall.id, type="egress_window", offset_in=128, width_in=36,
                        notes="10'8\" from the back wall."))
 db.add(models.Opening(wall_id=utility_bath_wall.id, type="folding_door", offset_in=45, width_in=30,
-                       notes="Folding door — Bathroom into Utility Room. Airflow for the boiler."))
+                       notes="Cedar louvered bifold door — Bathroom into Utility Room. Airflow for the boiler."))
 db.add(models.Opening(wall_id=bath_util_south_wall.id, type="door", offset_in=70, width_in=30,
-                       notes="Living/Family Room -> Bathroom door."))
+                       notes="Living/Family Room -> Dry Zone door."))
+db.add(models.Opening(wall_id=dry_wet_divider.id, type="arch_glass", offset_in=4, width_in=88,
+                       notes="96\"W x 96\"H custom steam glass enclosure: two fixed panels + a "
+                       "28\"-32\" hinged door, under a Tadelakt-plastered Moorish arch."))
 db.add(models.Opening(wall_id=band_north_wall.id, type="door", offset_in=265, width_in=25,
                        notes="Hallway/Stair Landing -> garage door."))
 db.commit()
@@ -172,9 +189,23 @@ feature("Music Studio", "mini_split", DIVIDER_X + 15, 10, 14, 6, "Mini-split —
 
 feature("Utility Room", "boiler", 10, BAND_Y + 10, 20, 20, "Boiler")
 
-feature("Bathroom", "toilet", UTILITY_W + 7, BAND_Y + 10, 16, 20, "Toilet")
-feature("Bathroom", "sink", UTILITY_W + 62, BAND_Y + 10, 20, 15, "Sink")
-feature("Bathroom", "shower", UTILITY_W + 37, BATH_UTIL_BOTTOM - 35, 40, 32, "Walk-in shower")
+# Wet Hammam Zone (y 235-283): shower against the west wall (shared with Utility),
+# heated marble bench + kurna basin against the north (back) wall toward the east end.
+feature("Wet Hammam Zone", "shower", UTILITY_W, BAND_Y + 20, 26, 26,
+        "Steam shower — 3-way thermostatic valve, ceiling rain head, slide-bar handheld wand")
+feature("Wet Hammam Zone", "heated_bench", UTILITY_W + 8, BAND_Y, 72, 18,
+        "Heated white marble bench (18\"x72\")")
+feature("Wet Hammam Zone", "kurna_basin", UTILITY_W + 82, BAND_Y + 3, 12, 12,
+        "Hand-carved marble kurna basin + brass taps + copper tas bowl")
+
+# Dry Zone (y 283-355): wall-hung toilet in the front-right corner (nearest the
+# entry/south wall), floating cedar vanity + mirror against the east wall.
+feature("Dry Zone", "toilet", UTILITY_W + 70, DRY_ZONE_Y + 42, 18, 22,
+        "Wall-hung toilet, concealed in-wall carrier tank")
+feature("Dry Zone", "sink", UTILITY_W + 72, DRY_ZONE_Y + 12, 20, 16,
+        "42\" floating carved cedar vanity + hammered brass vessel sink")
+feature("Dry Zone", "mirror", UTILITY_W + 74, DRY_ZONE_Y + 8, 16, 3,
+        "Arched Moroccan mirror + perforated brass sconces")
 
 feature("Living / Family Room", "built_in_shelving", FULL_W - 14, BASEMENT_Y + 60, 12, 168,
         "Built-in shelving along the east wall (longest unbroken wall).")
