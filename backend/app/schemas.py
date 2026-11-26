@@ -310,3 +310,13 @@ class LayoutPresetOut(BaseModel):
     stage_id: int
     name: str
     created_at: Optional[str] = None
+
+
+class RenderImageRequest(BaseModel):
+    room_id: int
+    image_base64: str  # data URL or raw base64 PNG from the 3D canvas
+    instructions: str = ""
+
+
+class RenderImageResponse(BaseModel):
+    image_base64: str

@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 from datetime import datetime, timezone
@@ -7,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from . import models, schemas
+from . import image_render, models, schemas
 from .database import Base, SessionLocal, engine, get_db
 
 Base.metadata.create_all(bind=engine)
@@ -439,6 +440,29 @@ def delete_preset(preset_id: int, db: Session = Depends(get_db)):
         db.delete(obj)
         db.commit()
     return {"ok": True}
+
+
+# ---------- Photoreal room render (OpenAI image-edit, server-side key) ----------
+
+@app.post("/render-image", response_model=schemas.RenderImageResponse)
+async def render_image(req: schemas.RenderImageRequest, db: Session = Depends(get_db)):
+    room = db.get(models.Room, req.room_id)
+    if not room:
+        raise HTTPException(404, "Room not found")
+    features = db.query(models.Feature).filter(
+        models.Feature.room_name == room.name, models.Feature.type != "pole"
+    ).all()
+
+    raw = req.image_base64.split(",", 1)[-1]  # strip a data: URL prefix if present
+    image_bytes = base64.b64decode(raw)
+    prompt = image_render.build_prompt(room, features, req.instructions)
+
+    try:
+        result_bytes = await image_render.generate_render(image_bytes, prompt)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+
+    return {"image_base64": base64.b64encode(result_bytes).decode("ascii")}
 
 
 # ---------- Static frontend (production) ----------

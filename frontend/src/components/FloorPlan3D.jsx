@@ -6,6 +6,7 @@ import { ACESFilmicToneMapping, DoubleSide, Plane, Quaternion, Vector2, Vector3 
 import { api } from "../api";
 import RoomHoverCard from "./RoomHoverCard";
 import LayoutPresets from "./LayoutPresets";
+import RoomRenderPanel from "./RoomRenderPanel";
 
 // Reusable PBR material presets, keyed by material family — the single lever
 // that makes the low-poly geometry actually look like brass/glass/marble/tile
@@ -985,6 +986,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const groupRefs = useRef({});
   const orbitRef = useRef();
+  const glRef = useRef(null);
   const wrapRef = useRef(null);
   const dragStateRef = useRef(null);
 
@@ -1178,11 +1180,13 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
         <p className="editor-hint">Drag to orbit, scroll to zoom, right-drag to pan.</p>
 
         <LayoutPresets stageId={stageId} onLoaded={onFeaturesChanged} />
+        <RoomRenderPanel stage={stage} glRef={glRef} />
       </div>
 
       <div className="editor-main">
         <div className="editor-canvas-wrap view-fit" ref={wrapRef}>
-          <Canvas shadows gl={{ toneMapping: ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+          <Canvas shadows gl={{ toneMapping: ACESFilmicToneMapping, toneMappingExposure: 1.05, preserveDrawingBuffer: true }}
+            onCreated={(state) => { glRef.current = state.gl; }}
             camera={{ position: [centerX + IN(maxX) * 0.9, IN(maxY) * 0.55, centerZ + IN(maxY) * 0.75], fov: 45 }}>
             <CameraRig target={[centerX, 1.5, centerZ]} />
             {/* Hemisphere fill (sky/ground split) + a tuned directional key light —

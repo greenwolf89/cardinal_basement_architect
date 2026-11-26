@@ -8,7 +8,10 @@ async function request(path, options) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
-  if (!res.ok) throw new Error(`${options?.method || "GET"} ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.json().then((d) => d.detail).catch(() => null);
+    throw new Error(detail || `${options?.method || "GET"} ${path} failed: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -39,6 +42,12 @@ export const api = {
   patchBankTransaction: (id, patch) =>
     request(`/bank-transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteBankTransaction: (id) => request(`/bank-transactions/${id}`, { method: "DELETE" }),
+
+  generateRoomRender: (roomId, imageBase64, instructions) =>
+    request("/render-image", {
+      method: "POST",
+      body: JSON.stringify({ room_id: roomId, image_base64: imageBase64, instructions: instructions || "" }),
+    }),
 
   getPresets: (stageId) => request(`/presets?stage_id=${stageId}`),
   createPreset: (stageId, name) =>
