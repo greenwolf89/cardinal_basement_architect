@@ -205,9 +205,10 @@ const StaticPlanLayer = memo(function StaticPlanLayer({ stage, scale, fontScale,
           resulting rect is computed in plan space, then mapped to screen once. */}
       {stage.walls.flatMap((wall) => (wall.openings || []).map((op) => {
         const horizontal = wall.y1 === wall.y2;
-        const isDoor = op.type === "door" || op.type === "garage_door";
+        const isDoor = op.type === "door" || op.type === "garage_door" || op.type === "glass_door";
         const color = op.type === "folding_door" ? "#e8d9b8"
           : op.type === "arch_glass" ? "#bfe8d8"
+          : op.type === "glass_door" ? "#d6ecf7"
           : isDoor ? "#ffffff" : "#bfe3ff";
         const thick = Math.max(3 / scale, (wall.thickness_in || 4.5) * 0.6);
         let x, y, w, h;
@@ -667,6 +668,7 @@ export default function FloorPlanEditor({ stage, stageId, stageLabel, onFeatures
           <span><i style={{ background: "#c0392b" }} /> new wall (planned)</span>
           <span><i style={{ background: "#b08a55" }} /> framed wall</span>
           <span><i style={{ background: "#fff", border: "1px solid #666" }} /> door</span>
+          <span><i style={{ background: "#d6ecf7", border: "1px solid #666" }} /> glass door</span>
           <span><i style={{ background: "#e8d9b8", border: "1px solid #666" }} /> folding door</span>
           <span><i style={{ background: "#bfe8d8", border: "1px solid #666" }} /> arch + steam glass</span>
           <span><i style={{ background: "#bfe3ff", border: "1px solid #666" }} /> window</span>

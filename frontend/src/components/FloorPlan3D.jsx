@@ -34,7 +34,12 @@ function Mat({ kind, color, ...rest }) {
       <meshPhysicalMaterial color={finalColor} roughness={m.roughness} metalness={m.metalness || 0}
         clearcoat={m.clearcoat} clearcoatRoughness={m.clearcoatRoughness}
         transmission={m.transmission} thickness={m.thickness} ior={m.ior}
-        transparent={m.transparent} opacity={m.opacity ?? 1} {...rest} />
+        transparent={m.transparent} opacity={m.opacity ?? 1}
+        // Transmission materials (glass) are invisible from their back face by
+        // default — fine for a pane only ever seen from one side, wrong for
+        // anything viewable from outside the building or either side of a
+        // partition, where it rendered as a flat black gap instead of glass.
+        side={DoubleSide} {...rest} />
     );
   }
   return <meshStandardMaterial color={finalColor} roughness={m.roughness ?? 0.6} metalness={m.metalness ?? 0} {...rest} />;
@@ -252,6 +257,7 @@ function collectSolidWallSegments(walls) {
 }
 
 const WALL_SNAP_IN = 8; // inches — how close before furniture snaps flush against a wall
+const CLICK_SLOP_PX = 6; // pixels — pointerdown/up closer than this counts as a click, not a drag/orbit
 
 // Clamps a candidate center position (inches, plan space) so the furniture's
 // axis-aligned footprint can't pass through any solid wall segment, and snaps
@@ -368,7 +374,7 @@ const WindowPane = memo(function WindowPane({ wall, opening }) {
 // both horizontal and vertical walls (a group-baseline-rotation approach here
 // previously got silently overwritten by the animation each frame on vertical
 // walls, leaving those doors closed in the wrong pose).
-const Door = memo(function Door({ wall, opening, doorId, open, onToggle }) {
+const Door = memo(function Door({ wall, opening, doorId, open, onToggle, glass }) {
   const groupRef = useRef();
   const targetAngle = open ? Math.PI * 0.42 : 0;
 
@@ -391,10 +397,35 @@ const Door = memo(function Door({ wall, opening, doorId, open, onToggle }) {
   return (
     <group ref={groupRef} position={[IN(hx), 0, IN(hz)]}
       onClick={(e) => { e.stopPropagation(); onToggle(doorId); }}>
-      <mesh position={[dx * doorW / 2, doorH / 2, dz * doorW / 2]} rotation={[0, panelRotY, 0]} castShadow>
-        <boxGeometry args={[doorW, doorH, doorT]} />
-        <Mat kind="cedar" />
-      </mesh>
+      {glass ? (
+        // A full-size glass pane with a thin dark metal frame around the
+        // perimeter only — an earlier version used a full-size frame box
+        // behind a smaller glass pane, but since both sat at the same depth
+        // the (bigger) frame's front face completely covered the glass from
+        // every angle, rendering as a plain dark panel.
+        <group position={[dx * doorW / 2, 0, dz * doorW / 2]} rotation={[0, panelRotY, 0]}>
+          <mesh position={[0, doorH / 2, 0]} castShadow>
+            <boxGeometry args={[doorW, doorH, doorT]} />
+            <Mat kind="glass" />
+          </mesh>
+          {[
+            [0, doorH - 0.1, doorW, 0.2],
+            [0, 0.1, doorW, 0.2],
+            [-doorW / 2 + 0.1, doorH / 2, 0.2, doorH],
+            [doorW / 2 - 0.1, doorH / 2, 0.2, doorH],
+          ].map(([fx, fy, fw, fh], i) => (
+            <mesh key={i} position={[fx, fy, 0]} castShadow>
+              <boxGeometry args={[fw, fh, doorT * 1.3]} />
+              <Mat kind="chrome" color="#3a3a3a" metalness={0.5} roughness={0.4} />
+            </mesh>
+          ))}
+        </group>
+      ) : (
+        <mesh position={[dx * doorW / 2, doorH / 2, dz * doorW / 2]} rotation={[0, panelRotY, 0]} castShadow>
+          <boxGeometry args={[doorW, doorH, doorT]} />
+          <Mat kind="cedar" />
+        </mesh>
+      )}
     </group>
   );
 });
@@ -571,12 +602,25 @@ const RoomFloor = memo(function RoomFloor({ room, onPointerMissed, onRoomSelect,
   const w = IN(room.width), d = IN(room.height);
   const cx = IN(room.x) + w / 2, cz = IN(room.y) + d / 2;
   const floorMat = floorMaterialFor(room);
+  const downPos = useRef(null);
   return (
     // Clicking the floor directly (as opposed to missing everything) still
     // needs to clear any selected furniture — onPointerMissed here is the
     // same "deselect" callback the parent already uses for empty clicks.
+    // R3F's onClick fires on any pointerdown+pointerup pair that lands on
+    // this mesh, with no built-in drag-distance check — so orbiting the
+    // camera (which stays over the same large floor the whole time) was
+    // ALSO opening this room's detail panel on release. downPos/CLICK_SLOP
+    // gates it to genuine clicks, same threshold the furniture drag uses.
     <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow onPointerMissed={onPointerMissed}
-      onClick={(e) => { e.stopPropagation(); onPointerMissed?.(); onRoomSelect?.(room); }}
+      onPointerDown={(e) => { downPos.current = { x: e.clientX, y: e.clientY }; }}
+      onClick={(e) => {
+        e.stopPropagation();
+        const d0 = downPos.current;
+        if (d0 && Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > CLICK_SLOP_PX) return;
+        onPointerMissed?.();
+        onRoomSelect?.(room);
+      }}
       onPointerMove={(e) => onRoomHover?.(room, e)}
       onPointerOut={() => onRoomUnhover?.(room)}>
       <planeGeometry args={[w, d]} />
@@ -893,16 +937,23 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
   const w = IN(wIn), h = IN(hIn);
   const cx = IN(feature.x) + w / 2, cz = IN(feature.y) + h / 2;
   const hitboxH = Math.max(2, Math.min(6.5, IN(Math.max(wIn, hIn))));
+  const downPos = useRef(null);
 
   return (
     <group ref={groupRef} position={[cx, 0, cz]} rotation={[0, -((feature.rotation || 0) * Math.PI) / 180, 0]}
       onClick={(e) => {
         e.stopPropagation();
-        onSelect(feature.id, groupRef);
+        // Same drag-vs-click gate as RoomFloor — without it, dragging the
+        // screen to reposition it also toggled its deployed state, since
+        // R3F's onClick fires on any pointerdown/up pair regardless of the
+        // drag that happened in between.
+        const d0 = downPos.current;
+        if (d0 && Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > CLICK_SLOP_PX) return;
         if (feature.type === "projection_screen") onToggleScreen(feature.id);
       }}
       onPointerDown={(e) => {
         e.stopPropagation();
+        downPos.current = { x: e.clientX, y: e.clientY };
         onSelect(feature.id, groupRef);
         if (mode === "translate") onDragStart(feature.id, groupRef, e, wIn, hIn);
       }}>
@@ -982,9 +1033,13 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
           list.push({ wall, opening: op, id: op.id, kind: "folding" });
         } else if (op.type === "arch_glass") {
           list.push({ wall, opening: op, id: op.id, kind: "arch_glass" });
-        } else if (op.type === "door" || op.type === "garage_door") {
+        } else if (op.type === "door" || op.type === "garage_door" || op.type === "glass_door") {
           // Wide (double-door) openings slide instead of swinging on a hinge.
-          list.push({ wall, opening: op, id: op.id, kind: op.width_in >= 48 ? "sliding" : "hinged" });
+          list.push({
+            wall, opening: op, id: op.id,
+            kind: op.width_in >= 48 ? "sliding" : "hinged",
+            glass: op.type === "glass_door",
+          });
         }
       }
     }
@@ -1164,7 +1219,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
                 : d.kind === "sliding" ? SlidingDoor : Door;
               return (
                 <DoorComp key={`d-${d.id}`} wall={d.wall} opening={d.opening} doorId={d.id}
-                  open={openDoors.has(d.id)} onToggle={toggleDoor} />
+                  open={openDoors.has(d.id)} onToggle={toggleDoor} glass={d.glass} />
               );
             })}
             {windows.map((win) => <WindowPane key={`win-${win.id}`} wall={win.wall} opening={win.opening} />)}
@@ -1196,7 +1251,9 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
               setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} wallSegments={collisionSegments} />
 
             <OrbitControls ref={orbitRef} enabled={orbitEnabled} target={[centerX, 1.5, centerZ]}
-              maxPolarAngle={Math.PI / 2.05} />
+              maxPolarAngle={Math.PI / 2.05}
+              enableDamping dampingFactor={0.12}
+              zoomSpeed={2.2} minDistance={4} maxDistance={Math.max(IN(maxX), IN(maxY)) * 2.5} />
 
             {/* Conservative post-processing — bloom makes brass/glass highlights and
                 warm lighting pop; no SSAO/DOF, keeping frame cost low. */}

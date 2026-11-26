@@ -141,6 +141,18 @@ def create_opening(opening: schemas.OpeningCreate, db: Session = Depends(get_db)
     return obj
 
 
+@app.patch("/openings/{opening_id}", response_model=schemas.OpeningOut)
+def patch_opening(opening_id: int, patch: schemas.OpeningUpdate, db: Session = Depends(get_db)):
+    obj = db.get(models.Opening, opening_id)
+    if not obj:
+        raise HTTPException(404, "Opening not found")
+    for k, v in patch.model_dump(exclude_unset=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
 @app.delete("/openings/{opening_id}")
 def delete_opening(opening_id: int, db: Session = Depends(get_db)):
     obj = db.get(models.Opening, opening_id)

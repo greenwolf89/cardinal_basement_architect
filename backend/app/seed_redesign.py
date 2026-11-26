@@ -148,8 +148,8 @@ db.add(models.Opening(wall_id=front_wall.id, type="door", offset_in=12, width_in
                        notes="Existing side door — kept for Storage & Water Filtration access."))
 db.add(models.Opening(wall_id=front_wall.id, type="window", offset_in=163, width_in=30,
                        notes="Window, left of the studio door."))
-db.add(models.Opening(wall_id=front_wall.id, type="door", offset_in=199, width_in=36,
-                       notes="New solid wood exterior door for the Music Studio."))
+db.add(models.Opening(wall_id=front_wall.id, type="glass_door", offset_in=199, width_in=36,
+                       notes="New exterior door for the Music Studio — mostly glass, dark metal frame."))
 db.add(models.Opening(wall_id=front_wall.id, type="window", offset_in=241, width_in=30,
                        notes="Window, right of the studio door."))
 db.add(models.Opening(wall_id=divider_wall.id, type="door", offset_in=195, width_in=36,

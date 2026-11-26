@@ -14,6 +14,13 @@ class OpeningCreate(OpeningBase):
     wall_id: int
 
 
+class OpeningUpdate(BaseModel):
+    type: Optional[str] = None
+    offset_in: Optional[float] = None
+    width_in: Optional[float] = None
+    notes: Optional[str] = None
+
+
 class OpeningOut(OpeningBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
