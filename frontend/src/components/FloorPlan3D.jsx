@@ -100,18 +100,10 @@ function DragController({ groupRefs, dragStateRef, setOrbitEnabled, onDragEnd, w
       if (!ref?.current) return;
       const snappedXFt = Math.round((pt.x + drag.offsetX) / GRID_FT) * GRID_FT;
       const snappedZFt = Math.round((pt.z + drag.offsetZ) / GRID_FT) * GRID_FT;
-      // Collision/snap math happens in inches (matching wall coordinates);
-      // `prev` is the previous frame's clamped position, so a wall can only
-      // be crossed by actually passing through its gap — not by the object
-      // suddenly "being on the other side" after one long jump.
-      const { x, z } = clampToWalls(
-        snappedXFt * 12, snappedZFt * 12, drag.wIn, drag.hIn,
-        drag.prevXIn, drag.prevZIn, wallSegments,
-      );
+      // Collision/snap math happens in inches (matching wall coordinates).
+      const { x, z } = clampToWalls(snappedXFt * 12, snappedZFt * 12, drag.wIn, drag.hIn, wallSegments);
       ref.current.position.x = x / 12;
       ref.current.position.z = z / 12;
-      drag.prevXIn = x;
-      drag.prevZIn = z;
     };
 
     const handleUp = () => {
@@ -263,11 +255,19 @@ const WALL_SNAP_IN = 8; // inches — how close before furniture snaps flush aga
 
 // Clamps a candidate center position (inches, plan space) so the furniture's
 // axis-aligned footprint can't pass through any solid wall segment, and snaps
-// flush against one once within WALL_SNAP_IN. `prev` (the position just
-// before this frame) determines which side of each wall counts as "inside" —
-// frame-coherent, so as long as per-frame drag deltas stay reasonably small
-// (true for interactive mouse movement) the object can't tunnel through.
-function clampToWalls(xIn, zIn, wIn, hIn, prevXIn, prevZIn, segments) {
+// flush against one once within WALL_SNAP_IN. Stateless — which side counts
+// as "inside" is decided fresh each call from the CURRENT proposed position
+// (nearest side wins), not from where the object was a frame ago. An earlier
+// version tracked a "previous side" across frames so a wall couldn't be
+// crossed by one big jump, but that meant any object that ever ended up on
+// the wrong side of a wall (a fast drag, or just being placed there) got
+// permanently stuck — every later drag re-derived "inside" from that same
+// bad side and pushed it right back. This version can't get stuck: a piece
+// sitting on the "wrong" side is simply snapped to the nearest face of that
+// side instead, and remains fully draggable back across next time it's
+// within the wall's own thickness, which is the one case that still can't be
+// told apart from "approaching from the other side."
+function clampToWalls(xIn, zIn, wIn, hIn, segments) {
   let x = xIn, z = zIn;
   const halfW = wIn / 2, halfH = hIn / 2;
   for (const seg of segments) {
@@ -275,23 +275,15 @@ function clampToWalls(xIn, zIn, wIn, hIn, prevXIn, prevZIn, segments) {
     if (seg.horizontal) {
       const segX0 = Math.min(seg.x1, seg.x2), segX1 = Math.max(seg.x1, seg.x2);
       if (x + halfW < segX0 || x - halfW > segX1) continue;
-      if (prevZIn <= seg.y) {
-        const limit = seg.y - ht - halfH;
-        if (z >= limit - WALL_SNAP_IN) z = limit;
-      } else {
-        const limit = seg.y + ht + halfH;
-        if (z <= limit + WALL_SNAP_IN) z = limit;
-      }
+      if (z + halfH < seg.y - ht - WALL_SNAP_IN || z - halfH > seg.y + ht + WALL_SNAP_IN) continue;
+      const northLimit = seg.y - ht - halfH, southLimit = seg.y + ht + halfH;
+      z = Math.abs(z - northLimit) <= Math.abs(z - southLimit) ? northLimit : southLimit;
     } else {
       const segY0 = Math.min(seg.y1, seg.y2), segY1 = Math.max(seg.y1, seg.y2);
       if (z + halfH < segY0 || z - halfH > segY1) continue;
-      if (prevXIn <= seg.x) {
-        const limit = seg.x - ht - halfW;
-        if (x >= limit - WALL_SNAP_IN) x = limit;
-      } else {
-        const limit = seg.x + ht + halfW;
-        if (x <= limit + WALL_SNAP_IN) x = limit;
-      }
+      if (x + halfW < seg.x - ht - WALL_SNAP_IN || x - halfW > seg.x + ht + WALL_SNAP_IN) continue;
+      const westLimit = seg.x - ht - halfW, eastLimit = seg.x + ht + halfW;
+      x = Math.abs(x - westLimit) <= Math.abs(x - eastLimit) ? westLimit : eastLimit;
     }
   }
   return { x, z };
@@ -302,13 +294,16 @@ function clampToWalls(xIn, zIn, wIn, hIn, prevXIn, prevZIn, segments) {
 // furniture commit re-rendered every wall and forced R3F to recreate their
 // BufferGeometry (changed args array reference) for no actual reason.
 //
-// Paint: once a wall is actually framed, its two interior-facing sides each
-// get the adjacent room's `paint_color` (sampled a few inches off the
-// centerline on each side) via a 6-entry face-material array on the box —
-// BoxGeometry's default face/group order is [+x,-x,+y,-y,+z,-z], so only the
-// two large faces perpendicular to the wall's thickness axis carry paint; the
-// other four (top/bottom/end-caps) keep the structural color. A wall with no
-// room on a given side (an exterior wall) just keeps that side structural too.
+// Paint: each wall's two interior-facing sides get the adjacent room's
+// `paint_color` (sampled a few inches off the centerline on each side) via a
+// 6-entry face-material array on the box — BoxGeometry's default face/group
+// order is [+x,-x,+y,-y,+z,-z], so only the two large faces perpendicular to
+// the wall's thickness axis carry paint; the other four (top/bottom/end-caps)
+// keep the structural color. A wall with no room on a given side (an
+// exterior wall) just keeps that side structural too. This is shown
+// regardless of build status — it's a design preview, not a progress
+// report, so a not-yet-framed wall still shows what its room would look
+// like painted.
 const Wall = memo(function Wall({ wall, rooms }) {
   const thick = wall.thickness_in || 4.5;
   const framed = wall.build_status === "framed" || wall.build_status === "complete";
@@ -321,16 +316,14 @@ const Wall = memo(function Wall({ wall, rooms }) {
     const w = horizontal ? IN(len) : IN(thick);
     const d = horizontal ? IN(thick) : IN(len);
 
-    let posColor = structColor, negColor = structColor;
-    if (framed) {
-      const off = thick / 2 + 8;
-      if (horizontal) {
-        posColor = findRoomObjAt(rooms, cx * 12, seg.y1 + off)?.paint_color || structColor;
-        negColor = findRoomObjAt(rooms, cx * 12, seg.y1 - off)?.paint_color || structColor;
-      } else {
-        posColor = findRoomObjAt(rooms, seg.x1 + off, cz * 12)?.paint_color || structColor;
-        negColor = findRoomObjAt(rooms, seg.x1 - off, cz * 12)?.paint_color || structColor;
-      }
+    const off = thick / 2 + 8;
+    let posColor, negColor;
+    if (horizontal) {
+      posColor = findRoomObjAt(rooms, cx * 12, seg.y1 + off)?.paint_color || structColor;
+      negColor = findRoomObjAt(rooms, cx * 12, seg.y1 - off)?.paint_color || structColor;
+    } else {
+      posColor = findRoomObjAt(rooms, seg.x1 + off, cz * 12)?.paint_color || structColor;
+      negColor = findRoomObjAt(rooms, seg.x1 - off, cz * 12)?.paint_color || structColor;
     }
     // [+x, -x, +y, -y, +z, -z]
     const faceColors = horizontal
@@ -1022,8 +1015,6 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
       offsetX: groupRef.current.position.x - e.point.x,
       offsetZ: groupRef.current.position.z - e.point.z,
       wIn, hIn,
-      prevXIn: groupRef.current.position.x * 12,
-      prevZIn: groupRef.current.position.z * 12,
     };
     setOrbitEnabled(false);
   }, []);
