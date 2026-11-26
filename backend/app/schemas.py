@@ -283,3 +283,21 @@ class BankTransactionUpdate(BaseModel):
 class BankTransactionOut(BankTransactionBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class LayoutPresetCreate(BaseModel):
+    stage_id: int
+    name: str
+
+
+class LayoutPresetUpdate(BaseModel):
+    name: Optional[str] = None
+    resave: bool = False  # if true, overwrite features_json with the stage's current features
+
+
+class LayoutPresetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    stage_id: int
+    name: str
+    created_at: Optional[str] = None

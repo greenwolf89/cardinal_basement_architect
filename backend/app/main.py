@@ -1,4 +1,6 @@
+import json
 import os
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -343,6 +345,84 @@ def update_bank_transaction(tx_id: int, patch: schemas.BankTransactionUpdate, db
 @app.delete("/bank-transactions/{tx_id}")
 def delete_bank_transaction(tx_id: int, db: Session = Depends(get_db)):
     obj = db.get(models.BankTransaction, tx_id)
+    if obj:
+        db.delete(obj)
+        db.commit()
+    return {"ok": True}
+
+
+# ---------- Layout presets ----------
+
+def _feature_snapshot(db: Session, stage_id: int) -> str:
+    features = db.query(models.Feature).filter(
+        models.Feature.stage_id == stage_id, models.Feature.type != "pole"
+    ).all()
+    return json.dumps([
+        {
+            "room_name": f.room_name, "type": f.type, "x": f.x, "y": f.y,
+            "width": f.width, "height": f.height, "rotation": f.rotation, "label": f.label,
+        }
+        for f in features
+    ])
+
+
+@app.get("/presets", response_model=list[schemas.LayoutPresetOut])
+def list_presets(stage_id: int, db: Session = Depends(get_db)):
+    return db.query(models.LayoutPreset).filter(models.LayoutPreset.stage_id == stage_id).all()
+
+
+@app.post("/presets", response_model=schemas.LayoutPresetOut)
+def create_preset(preset: schemas.LayoutPresetCreate, db: Session = Depends(get_db)):
+    obj = models.LayoutPreset(
+        stage_id=preset.stage_id, name=preset.name,
+        features_json=_feature_snapshot(db, preset.stage_id),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.patch("/presets/{preset_id}", response_model=schemas.LayoutPresetOut)
+def update_preset(preset_id: int, patch: schemas.LayoutPresetUpdate, db: Session = Depends(get_db)):
+    obj = db.get(models.LayoutPreset, preset_id)
+    if not obj:
+        raise HTTPException(404, "Preset not found")
+    if patch.name is not None:
+        obj.name = patch.name
+    if patch.resave:
+        obj.features_json = _feature_snapshot(db, obj.stage_id)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.post("/presets/{preset_id}/load", response_model=list[schemas.FeatureOut])
+def load_preset(preset_id: int, db: Session = Depends(get_db)):
+    obj = db.get(models.LayoutPreset, preset_id)
+    if not obj:
+        raise HTTPException(404, "Preset not found")
+    db.query(models.Feature).filter(
+        models.Feature.stage_id == obj.stage_id, models.Feature.type != "pole"
+    ).delete(synchronize_session=False)
+    new_features = []
+    for item in json.loads(obj.features_json):
+        f = models.Feature(stage_id=obj.stage_id, **item)
+        db.add(f)
+        new_features.append(f)
+    db.commit()
+    for f in new_features:
+        db.refresh(f)
+    pole = db.query(models.Feature).filter(
+        models.Feature.stage_id == obj.stage_id, models.Feature.type == "pole"
+    ).all()
+    return new_features + pole
+
+
+@app.delete("/presets/{preset_id}")
+def delete_preset(preset_id: int, db: Session = Depends(get_db)):
+    obj = db.get(models.LayoutPreset, preset_id)
     if obj:
         db.delete(obj)
         db.commit()

@@ -162,6 +162,21 @@ class LaborEntry(Base):
     notes = Column(Text, default="")
 
 
+class LayoutPreset(Base):
+    """A named snapshot of a stage's furniture arrangement (excluding the pole
+    marker, which is structural). Loading one fully replaces the stage's
+    current non-pole features — same delete+recreate convention used
+    everywhere else in this codebase for stage geometry."""
+
+    __tablename__ = "layout_presets"
+
+    id = Column(Integer, primary_key=True)
+    stage_id = Column(Integer, ForeignKey("stages.id"))
+    name = Column(String)
+    features_json = Column(Text)  # JSON array of {type,x,y,width,height,rotation,label,room_name}
+    created_at = Column(String, nullable=True)
+
+
 class BankTransaction(Base):
     """A transaction imported from a bank/Rocket Money CSV export."""
 

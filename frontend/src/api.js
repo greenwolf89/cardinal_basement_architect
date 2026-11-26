@@ -39,4 +39,12 @@ export const api = {
   patchBankTransaction: (id, patch) =>
     request(`/bank-transactions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteBankTransaction: (id) => request(`/bank-transactions/${id}`, { method: "DELETE" }),
+
+  getPresets: (stageId) => request(`/presets?stage_id=${stageId}`),
+  createPreset: (stageId, name) =>
+    request("/presets", { method: "POST", body: JSON.stringify({ stage_id: stageId, name }) }),
+  patchPreset: (id, patch) =>
+    request(`/presets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  loadPreset: (id) => request(`/presets/${id}/load`, { method: "POST" }),
+  deletePreset: (id) => request(`/presets/${id}`, { method: "DELETE" }),
 };
