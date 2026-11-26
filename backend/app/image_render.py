@@ -1,5 +1,5 @@
 """Turns a 3D-view screenshot + a room's known facts into a photorealistic
-interior render via OpenAI's image-edit API (gpt-image-1) — an image-to-image
+interior render via OpenAI's image-edit API (gpt-image-1.5) — an image-to-image
 transform so the result respects the actual layout/furniture placement
 instead of just a text-to-image guess."""
 
@@ -52,7 +52,7 @@ async def generate_render(image_bytes: bytes, prompt: str) -> bytes:
         resp = await client.post(
             OPENAI_IMAGES_EDIT_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            data={"model": "gpt-image-1", "prompt": prompt, "size": "1536x1024"},
+            data={"model": "gpt-image-1.5", "prompt": prompt, "size": "1536x1024"},
             files={"image": ("scene.png", image_bytes, "image/png")},
         )
     if resp.status_code != 200:
