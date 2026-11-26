@@ -74,7 +74,7 @@ const GRID_FT = 3 / 12; // 3" grid snap, matching the 2D editor
 // footprint, mutating the object's position imperatively (no React re-render
 // mid-drag, same perf pattern as the door-swing animations) with a live grid
 // snap, and reports the final position back via `onDragEnd` on release.
-function DragController({ groupRefs, dragStateRef, setOrbitEnabled, onDragEnd }) {
+function DragController({ groupRefs, dragStateRef, setOrbitEnabled, onDragEnd, wallSegments }) {
   const { camera, raycaster, gl } = useThree();
 
   useEffect(() => {
@@ -98,8 +98,20 @@ function DragController({ groupRefs, dragStateRef, setOrbitEnabled, onDragEnd })
       if (!pt) return;
       const ref = groupRefs.current[drag.id];
       if (!ref?.current) return;
-      ref.current.position.x = Math.round((pt.x + drag.offsetX) / GRID_FT) * GRID_FT;
-      ref.current.position.z = Math.round((pt.z + drag.offsetZ) / GRID_FT) * GRID_FT;
+      const snappedXFt = Math.round((pt.x + drag.offsetX) / GRID_FT) * GRID_FT;
+      const snappedZFt = Math.round((pt.z + drag.offsetZ) / GRID_FT) * GRID_FT;
+      // Collision/snap math happens in inches (matching wall coordinates);
+      // `prev` is the previous frame's clamped position, so a wall can only
+      // be crossed by actually passing through its gap — not by the object
+      // suddenly "being on the other side" after one long jump.
+      const { x, z } = clampToWalls(
+        snappedXFt * 12, snappedZFt * 12, drag.wIn, drag.hIn,
+        drag.prevXIn, drag.prevZIn, wallSegments,
+      );
+      ref.current.position.x = x / 12;
+      ref.current.position.z = z / 12;
+      drag.prevXIn = x;
+      drag.prevZIn = z;
     };
 
     const handleUp = () => {
@@ -115,7 +127,7 @@ function DragController({ groupRefs, dragStateRef, setOrbitEnabled, onDragEnd })
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
     };
-  }, [camera, raycaster, gl, groupRefs, dragStateRef, onDragEnd, setOrbitEnabled]);
+  }, [camera, raycaster, gl, groupRefs, dragStateRef, onDragEnd, setOrbitEnabled, wallSegments]);
 
   return null;
 }
@@ -142,13 +154,15 @@ const FEATURE_COLORS = {
   heated_bench: "#e8e2d8",
   kurna_basin: "#c9a876",
   mirror: "#aad4e8",
+  projection_screen: "#2b2b2b",
 };
 
 const PALETTE = [
   { type: "sofa", label: "Sofa", w: 80, h: 34 },
   { type: "sleeper_sofa", label: "Sleeper Sofa", w: 78, h: 34 },
   { type: "built_in_shelving", label: "Built-in Shelving", w: 60, h: 12 },
-  { type: "kid_zone", label: "Kid Play Zone", w: 70, h: 70 },
+  { type: "kid_zone", label: "Kid Play Zone (Loft)", w: 72, h: 96 },
+  { type: "projection_screen", label: "Projection Screen", w: 80, h: 6 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
@@ -194,6 +208,63 @@ function wallSegments(wall) {
     }
     return { x1: wall.x1, y1: wall.y1 + dir * s, x2: wall.x1, y2: wall.y1 + dir * e };
   });
+}
+
+// Flattens every wall's solid (post-opening-gap) segments into a simple list
+// for drag collision — doorway/window gaps are intentionally excluded so you
+// can still carry furniture through an opening, only solid wall blocks it.
+function collectSolidWallSegments(walls) {
+  const out = [];
+  for (const wall of walls || []) {
+    const thickness = wall.thickness_in || 4.5;
+    for (const seg of wallSegments(wall)) {
+      const horizontal = seg.y1 === seg.y2;
+      if (horizontal) {
+        out.push({ horizontal: true, x1: seg.x1, x2: seg.x2, y: seg.y1, thickness });
+      } else {
+        out.push({ horizontal: false, y1: seg.y1, y2: seg.y2, x: seg.x1, thickness });
+      }
+    }
+  }
+  return out;
+}
+
+const WALL_SNAP_IN = 8; // inches — how close before furniture snaps flush against a wall
+
+// Clamps a candidate center position (inches, plan space) so the furniture's
+// axis-aligned footprint can't pass through any solid wall segment, and snaps
+// flush against one once within WALL_SNAP_IN. `prev` (the position just
+// before this frame) determines which side of each wall counts as "inside" —
+// frame-coherent, so as long as per-frame drag deltas stay reasonably small
+// (true for interactive mouse movement) the object can't tunnel through.
+function clampToWalls(xIn, zIn, wIn, hIn, prevXIn, prevZIn, segments) {
+  let x = xIn, z = zIn;
+  const halfW = wIn / 2, halfH = hIn / 2;
+  for (const seg of segments) {
+    const ht = seg.thickness / 2;
+    if (seg.horizontal) {
+      const segX0 = Math.min(seg.x1, seg.x2), segX1 = Math.max(seg.x1, seg.x2);
+      if (x + halfW < segX0 || x - halfW > segX1) continue;
+      if (prevZIn <= seg.y) {
+        const limit = seg.y - ht - halfH;
+        if (z >= limit - WALL_SNAP_IN) z = limit;
+      } else {
+        const limit = seg.y + ht + halfH;
+        if (z <= limit + WALL_SNAP_IN) z = limit;
+      }
+    } else {
+      const segY0 = Math.min(seg.y1, seg.y2), segY1 = Math.max(seg.y1, seg.y2);
+      if (z + halfH < segY0 || z - halfH > segY1) continue;
+      if (prevXIn <= seg.x) {
+        const limit = seg.x - ht - halfW;
+        if (x >= limit - WALL_SNAP_IN) x = limit;
+      } else {
+        const limit = seg.x + ht + halfW;
+        if (x <= limit + WALL_SNAP_IN) x = limit;
+      }
+    }
+  }
+  return { x, z };
 }
 
 // Memoized — walls only change when the stage's own wall data changes, not
@@ -491,10 +562,130 @@ const BeamAndPole = memo(function BeamAndPole({ pole, maxYIn }) {
   );
 });
 
+// A ceiling-mounted roll-down screen — click toggles it between retracted
+// (rolled up into the housing) and deployed (unrolled down toward the
+// floor). Deploy state is ephemeral (not persisted), same convention as
+// door open/closed state.
+function ProjectionScreenMesh({ w, deployed }) {
+  const screenRef = useRef();
+  const heightRef = useRef(0.001);
+  const maxHeight = 5; // ft, fully deployed
+  const topY = CEILING_H - 0.4; // just under the ceiling/beam
+
+  useFrame(() => {
+    const target = deployed ? maxHeight : 0.001;
+    heightRef.current += (target - heightRef.current) * 0.12;
+    if (screenRef.current) {
+      screenRef.current.scale.y = heightRef.current / maxHeight;
+      screenRef.current.position.y = topY - heightRef.current / 2;
+    }
+  });
+
+  return (
+    <group>
+      <mesh position={[0, topY + 0.15, 0]} castShadow>
+        <boxGeometry args={[w, 0.3, 0.3]} />
+        <Mat kind="chrome" color="#3a3a3a" metalness={0.6} roughness={0.4} />
+      </mesh>
+      <mesh ref={screenRef} position={[0, topY, 0]}>
+        <boxGeometry args={[w * 0.96, maxHeight, 0.03]} />
+        <meshStandardMaterial color="#1c1c1c" roughness={0.6} />
+      </mesh>
+    </group>
+  );
+}
+
+// Kid play zone — a low-poly corner loft modeled on the Starship-01 plan:
+// an elevated deck with bulkhead railings + portholes, a ladder up one
+// corner, a slide exiting the opposite side, and a cockpit console. "w" runs
+// along the entry/ladder side, "h" along the slide-exit length.
+function SpaceshipLoft({ w, h }) {
+  const deckY = 40 / 12; // 40" deck elevation, per the plan
+  const deckW = w * 0.82, deckD = h * 0.8;
+  const deckX = -w * 0.06, deckZ = -h * 0.08; // nudge back/left, leaving ladder + slide clearance
+  const railH = 1.5;
+  const hullColor = "#d8dde0";
+  const slateColor = "#3a4650";
+
+  const portholes = [
+    [deckX - deckW / 2, deckY + railH / 2, deckZ],
+    [deckX, deckY + railH / 2, deckZ - deckD / 2],
+  ];
+
+  return (
+    <group>
+      {/* Cargo bay mat — the open under-loft reading nook */}
+      <mesh position={[0, 0.05, h * 0.12]} receiveShadow>
+        <boxGeometry args={[w * 0.85, 0.1, h * 0.55]} />
+        <Mat kind="fabric" color="#3b7bb2" />
+      </mesh>
+
+      {/* Deck posts */}
+      {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => (
+        <mesh key={i} position={[deckX + (sx * deckW) / 2.2, deckY / 2, deckZ + (sz * deckD) / 2.2]} castShadow>
+          <boxGeometry args={[0.25, deckY, 0.25]} />
+          <Mat kind="wood" color="#8a8f94" />
+        </mesh>
+      ))}
+
+      {/* Loft deck */}
+      <mesh position={[deckX, deckY, deckZ]} castShadow receiveShadow>
+        <boxGeometry args={[deckW, 0.3, deckD]} />
+        <Mat kind="wood" color={hullColor} roughness={0.55} />
+      </mesh>
+
+      {/* Bulkhead guardrails around the deck, slatted top rail */}
+      <mesh position={[deckX, deckY + railH / 2, deckZ - deckD / 2]} castShadow>
+        <boxGeometry args={[deckW, railH, 0.15]} /><Mat kind="wood" color={hullColor} />
+      </mesh>
+      <mesh position={[deckX - deckW / 2, deckY + railH / 2, deckZ]} castShadow>
+        <boxGeometry args={[0.15, railH, deckD]} /><Mat kind="wood" color={hullColor} />
+      </mesh>
+      <mesh position={[deckX + deckW / 2, deckY + railH / 2, deckZ]} castShadow>
+        <boxGeometry args={[0.15, railH, deckD]} /><Mat kind="wood" color={hullColor} />
+      </mesh>
+      {portholes.map(([px, py, pz], i) => (
+        <mesh key={i} position={[px, py, pz]} rotation={[0, i === 0 ? Math.PI / 2 : 0, 0]} castShadow>
+          <cylinderGeometry args={[0.35, 0.35, 0.17, 16]} />
+          <Mat kind="glass" color="#bfe3ff" />
+        </mesh>
+      ))}
+
+      {/* Cockpit console on the deck */}
+      <mesh position={[deckX, deckY + 1, deckZ - deckD * 0.3]} castShadow>
+        <boxGeometry args={[1.4, 1.4, 0.8]} /><Mat kind="chrome" color={slateColor} metalness={0.3} roughness={0.5} />
+      </mesh>
+
+      {/* 65° angled ship ladder — front-left corner */}
+      {[0, 1, 2, 3, 4].map((i) => {
+        const t = i / 4;
+        return (
+          <mesh key={i} position={[-w / 2 + 0.4, 0.3 + t * (deckY - 0.3), h / 2 - 0.3 - t * 0.6]} castShadow>
+            <boxGeometry args={[1.3, 0.15, 0.5]} /><Mat kind="cedar" />
+          </mesh>
+        );
+      })}
+      {[-1, 1].map((s, i) => (
+        <mesh key={i} position={[-w / 2 + 0.4 + s * 0.6, deckY / 2 + 0.2, h / 2 - 1.2]}
+          rotation={[0.35, 0, 0]} castShadow>
+          <boxGeometry args={[0.12, deckY + 0.6, 0.12]} /><Mat kind="cedar" />
+        </mesh>
+      ))}
+
+      {/* Escape pod wave slide — exits the opposite (right) side, sloping to the floor */}
+      <mesh position={[w / 2 - 1.2, deckY / 2 - 0.1, deckZ]} rotation={[0, 0, -0.5]} castShadow>
+        <boxGeometry args={[0.1, deckY * 1.25, 1.9]} /><Mat kind="glass" color="#5fb3c9" />
+      </mesh>
+    </group>
+  );
+}
+
 // Low-poly, recognizable-silhouette furniture — not photoreal, just "a chair is a chair".
-function FurnitureMesh({ type, w, h }) {
+function FurnitureMesh({ type, w, h, deployed }) {
   const color = FEATURE_COLORS[type] || "#888";
   switch (type) {
+    case "projection_screen":
+      return <ProjectionScreenMesh w={w} deployed={deployed} />;
     case "sofa":
     case "sleeper_sofa":
       return (
@@ -554,12 +745,7 @@ function FurnitureMesh({ type, w, h }) {
         </group>
       );
     case "kid_zone":
-      return (
-        <group>
-          <mesh position={[0, 0.1, 0]} receiveShadow><boxGeometry args={[w, 0.2, h]} /><Mat kind="fabric" color={color} /></mesh>
-          <mesh position={[w / 2 - IN(10), 0.9, h / 2 - IN(10)]} castShadow><boxGeometry args={[IN(18), 1.6, IN(14)]} /><Mat kind="fabric" color="#c0392b" /></mesh>
-        </group>
-      );
+      return <SpaceshipLoft w={w} h={h} />;
     case "electric_panel":
       return <mesh position={[0, 4.5, 0]} castShadow><boxGeometry args={[w, h, 0.2]} /><Mat kind="chrome" color={color} metalness={0.4} /></mesh>;
     case "acoustic_treatment":
@@ -593,7 +779,7 @@ function FurnitureMesh({ type, w, h }) {
 // object in the `features` array (see commitTransform below), so every other
 // Furniture instance still receives the exact same `feature` reference and
 // can skip re-rendering entirely once `onSelect` is stabilized too.
-const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, onDragStart }) {
+const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, onDragStart, screenDeployed, onToggleScreen }) {
   const groupRef = useRef();
   const wIn = feature.width || 20, hIn = feature.height || 20;
   const w = IN(wIn), h = IN(hIn);
@@ -602,11 +788,15 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
 
   return (
     <group ref={groupRef} position={[cx, 0, cz]} rotation={[0, -((feature.rotation || 0) * Math.PI) / 180, 0]}
-      onClick={(e) => { e.stopPropagation(); onSelect(feature.id, groupRef); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(feature.id, groupRef);
+        if (feature.type === "projection_screen") onToggleScreen(feature.id);
+      }}
       onPointerDown={(e) => {
         e.stopPropagation();
         onSelect(feature.id, groupRef);
-        if (mode === "translate") onDragStart(feature.id, groupRef, e);
+        if (mode === "translate") onDragStart(feature.id, groupRef, e, wIn, hIn);
       }}>
       {/* Invisible hitbox — taller than the old paper-thin version so steep
           camera angles still land a click on the piece instead of missing it. */}
@@ -620,7 +810,7 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
           <meshBasicMaterial color="#ffcc66" opacity={0.35} transparent />
         </mesh>
       )}
-      <FurnitureMesh type={feature.type} w={w} h={h} />
+      <FurnitureMesh type={feature.type} w={w} h={h} deployed={screenDeployed} />
     </group>
   );
 });
@@ -630,6 +820,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const [selectedId, setSelectedId] = useState(null);
   const [mode, setMode] = useState("translate");
   const [openDoors, setOpenDoors] = useState(new Set());
+  const [deployedScreens, setDeployedScreens] = useState(new Set());
   const [orbitEnabled, setOrbitEnabled] = useState(true);
   const [hoveredRoom, setHoveredRoom] = useState(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
@@ -657,11 +848,19 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
       return next;
     });
   }, []);
+  const toggleScreen = useCallback((id) => {
+    setDeployedScreens((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
 
   useEffect(() => { setFeatures(stage?.features || []); setSelectedId(null); }, [stage]);
 
   const maxX = useMemo(() => Math.max(...(stage?.walls || []).map((w) => Math.max(w.x1, w.x2)), 0), [stage]);
   const maxY = useMemo(() => Math.max(...(stage?.walls || []).map((w) => Math.max(w.y1, w.y2)), 0), [stage]);
+  const collisionSegments = useMemo(() => collectSolidWallSegments(stage?.walls), [stage]);
   const pole = useMemo(() => (stage?.features || []).find((f) => f.type === "pole"), [stage]);
   const nonPoleFeatures = features.filter((f) => f.type !== "pole");
 
@@ -699,12 +898,15 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   // Seeds the drag state on pointer-down; DragController (inside the Canvas,
   // where camera/raycaster are available) does the actual tracking and calls
   // commitPosition on release.
-  const handleDragStart = useCallback((id, groupRef, e) => {
+  const handleDragStart = useCallback((id, groupRef, e, wIn, hIn) => {
     dragStateRef.current = {
       id,
       startX: e.clientX, startY: e.clientY, moved: false,
       offsetX: groupRef.current.position.x - e.point.x,
       offsetZ: groupRef.current.position.z - e.point.z,
+      wIn, hIn,
+      prevXIn: groupRef.current.position.x * 12,
+      prevZIn: groupRef.current.position.z * 12,
     };
     setOrbitEnabled(false);
   }, []);
@@ -802,7 +1004,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
         })}
         <button className="palette-delete" disabled={!selectedId} onClick={deleteSelected}>Delete selected</button>
         <button className="palette-rotate" disabled={!selectedId} onClick={duplicateSelected}>Duplicate</button>
-        <p className="editor-hint">Click and drag furniture to move it (snaps to a 3" grid). Click a door to open/close it.</p>
+        <p className="editor-hint">Click and drag furniture to move it (snaps to a 3" grid, and to nearby walls). Click a door or the projection screen to open/close it.</p>
 
         <div className="editor-divider" />
         <div className="view-mode-toggle">
@@ -862,7 +1064,8 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
 
             {nonPoleFeatures.map((f) => (
               <Furniture key={f.id} feature={f} selected={selectedId === f.id}
-                onSelect={handleSelect} mode={mode} onDragStart={handleDragStart} />
+                onSelect={handleSelect} mode={mode} onDragStart={handleDragStart}
+                screenDeployed={deployedScreens.has(f.id)} onToggleScreen={toggleScreen} />
             ))}
 
             {/* Move is handled entirely by DragController's direct click-and-drag below —
@@ -880,7 +1083,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
               />
             )}
             <DragController groupRefs={groupRefs} dragStateRef={dragStateRef}
-              setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} />
+              setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} wallSegments={collisionSegments} />
 
             <OrbitControls ref={orbitRef} enabled={orbitEnabled} target={[centerX, 1.5, centerZ]}
               maxPolarAngle={Math.PI / 2.05} />

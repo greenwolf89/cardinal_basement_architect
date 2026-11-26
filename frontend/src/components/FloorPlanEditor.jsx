@@ -29,13 +29,15 @@ const FEATURE_COLORS = {
   heated_bench: "#e8e2d8",
   kurna_basin: "#c9a876",
   mirror: "#aad4e8",
+  projection_screen: "#2b2b2b",
 };
 
 const PALETTE = [
   { type: "sofa", label: "Sofa", w: 80, h: 34 },
   { type: "sleeper_sofa", label: "Sleeper Sofa", w: 78, h: 34 },
   { type: "built_in_shelving", label: "Built-in Shelving", w: 60, h: 12 },
-  { type: "kid_zone", label: "Kid Play Zone", w: 70, h: 70 },
+  { type: "kid_zone", label: "Kid Play Zone (Loft)", w: 72, h: 96 },
+  { type: "projection_screen", label: "Projection Screen", w: 80, h: 6 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
