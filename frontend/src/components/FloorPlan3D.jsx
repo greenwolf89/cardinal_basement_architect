@@ -599,27 +599,35 @@ const SteamGlassEnclosure = memo(function SteamGlassEnclosure({ wall, opening, d
   );
 });
 
-const RoomFloor = memo(function RoomFloor({ room, onPointerMissed, onRoomSelect, onRoomHover, onRoomUnhover }) {
+const RoomFloor = memo(function RoomFloor({ room, deselect, onRoomSelect, onRoomHover, onRoomUnhover }) {
   const w = IN(room.width), d = IN(room.height);
   const cx = IN(room.x) + w / 2, cz = IN(room.y) + d / 2;
   const floorMat = floorMaterialFor(room);
   const downPos = useRef(null);
   return (
     // Clicking the floor directly (as opposed to missing everything) still
-    // needs to clear any selected furniture — onPointerMissed here is the
-    // same "deselect" callback the parent already uses for empty clicks.
-    // R3F's onClick fires on any pointerdown+pointerup pair that lands on
-    // this mesh, with no built-in drag-distance check — so orbiting the
+    // needs to clear any selected furniture, so `deselect` is called
+    // explicitly in onClick below — NOT via the R3F `onPointerMissed` mesh
+    // prop. That prop fires whenever a click doesn't land on THIS specific
+    // mesh, even if it legitimately hit something else (like a piece of
+    // furniture in front of it) — with one of these on every room floor,
+    // clicking furniture triggered a `deselect()` cascade (one per room not
+    // hit) immediately after the furniture was selected, wiping the
+    // selection out on every single click. `onPointerMissed` belongs on the
+    // Canvas itself (fires only on a true scene-wide miss), not per-mesh.
+    //
+    // R3F's onClick also fires on any pointerdown+pointerup pair that lands
+    // on this mesh, with no built-in drag-distance check — so orbiting the
     // camera (which stays over the same large floor the whole time) was
     // ALSO opening this room's detail panel on release. downPos/CLICK_SLOP
     // gates it to genuine clicks, same threshold the furniture drag uses.
-    <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow onPointerMissed={onPointerMissed}
+    <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow
       onPointerDown={(e) => { downPos.current = { x: e.clientX, y: e.clientY }; }}
       onClick={(e) => {
         e.stopPropagation();
         const d0 = downPos.current;
         if (d0 && Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > CLICK_SLOP_PX) return;
-        onPointerMissed?.();
+        deselect?.();
         onRoomSelect?.(room);
       }}
       onPointerMove={(e) => onRoomHover?.(room, e)}
@@ -1187,6 +1195,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
         <div className="editor-canvas-wrap view-fit" ref={wrapRef}>
           <Canvas shadows gl={{ toneMapping: ACESFilmicToneMapping, toneMappingExposure: 1.05, preserveDrawingBuffer: true }}
             onCreated={(state) => { glRef.current = state.gl; }}
+            onPointerMissed={deselect}
             camera={{ position: [centerX + IN(maxX) * 0.9, IN(maxY) * 0.55, centerZ + IN(maxY) * 0.75], fov: 45 }}>
             <CameraRig target={[centerX, 1.5, centerZ]} />
             {/* Hemisphere fill (sky/ground split) + a tuned directional key light —
@@ -1203,8 +1212,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
               shadow-bias={-0.0004}
             />
             <Environment preset="apartment" environmentIntensity={0.6} />
-            <mesh position={[centerX, -0.05, centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow
-              onPointerMissed={deselect}>
+            <mesh position={[centerX, -0.05, centerZ]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
               <planeGeometry args={[IN(maxX) + 6, IN(maxY) + 6]} />
               <meshStandardMaterial color="#f2efe6" roughness={0.9} />
             </mesh>
@@ -1212,7 +1220,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
               blur={2} far={6} resolution={512} />
 
             {stage.rooms.map((room) => (
-              <RoomFloor key={`f-${room.id}`} room={room} onPointerMissed={deselect}
+              <RoomFloor key={`f-${room.id}`} room={room} deselect={deselect}
                 onRoomSelect={onRoomSelect} onRoomHover={handleRoomHover} onRoomUnhover={handleRoomUnhover} />
             ))}
             {stage.rooms.map((room) => <RoomLabel key={`l-${room.id}`} room={room} />)}
