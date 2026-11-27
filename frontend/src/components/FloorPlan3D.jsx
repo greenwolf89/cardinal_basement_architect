@@ -296,6 +296,122 @@ function clampToWalls(xIn, zIn, wIn, hIn, segments) {
   return { x, z };
 }
 
+// Converts a wall segment (thin, axis-aligned, with thickness) into a plain
+// axis-aligned box in inches — used by the walk-mode player collider, which
+// (unlike furniture dragging) can approach a wall from any angle, so a
+// closest-point circle-vs-box check is more robust than the nearest-side
+// snap above.
+function wallBoxFor(seg) {
+  const ht = seg.thickness / 2;
+  if (seg.horizontal) {
+    return { x0: Math.min(seg.x1, seg.x2), x1: Math.max(seg.x1, seg.x2), z0: seg.y - ht, z1: seg.y + ht };
+  }
+  return { x0: seg.x - ht, x1: seg.x + ht, z0: Math.min(seg.y1, seg.y2), z1: Math.max(seg.y1, seg.y2) };
+}
+
+// Pushes a circle (the walking player, in inches) out of any box it's
+// penetrating, along the shortest escape vector. Used for both walls and
+// furniture in walk mode.
+function resolveCircleVsBoxes(x, z, radius, boxes) {
+  for (const b of boxes) {
+    const closestX = Math.max(b.x0, Math.min(x, b.x1));
+    const closestZ = Math.max(b.z0, Math.min(z, b.z1));
+    const dx = x - closestX, dz = z - closestZ;
+    const distSq = dx * dx + dz * dz;
+    if (distSq < radius * radius) {
+      const dist = Math.sqrt(distSq) || 0.0001;
+      const push = radius - dist;
+      x += (dx / dist) * push;
+      z += (dz / dist) * push;
+    }
+  }
+  return { x, z };
+}
+
+const WALK_SPEED_FTPS = 9; // ft/sec
+const WALK_RADIUS_IN = 10; // inches — player collision radius
+const EYE_HEIGHT_FT = 5.5;
+const LOOK_SENSITIVITY = 0.0022;
+
+// First-person walkthrough: click the canvas to lock the pointer, WASD/arrows
+// to move, mouse to look, Escape (or the Exit button) to leave. Lives
+// alongside OrbitControls rather than replacing it — only one is active at
+// a time, chosen by the Orbit/Walk toggle. Movement and collision both work
+// in inches (matching wall/feature coordinates), converting to feet only
+// when writing to the camera.
+function WalkControls({ active, wallBoxes, furnitureBoxes, startPos, onExit }) {
+  const { camera, gl } = useThree();
+  const yawRef = useRef(startPos.yaw || 0);
+  const pitchRef = useRef(0);
+  const posRef = useRef({ x: startPos.x, z: startPos.z }); // inches
+  const keysRef = useRef({});
+  const lockedRef = useRef(false);
+
+  useEffect(() => {
+    if (!active) return;
+    camera.rotation.order = "YXZ";
+    posRef.current = { x: startPos.x, z: startPos.z };
+    yawRef.current = startPos.yaw || 0;
+    pitchRef.current = 0;
+    camera.position.set(IN(posRef.current.x), EYE_HEIGHT_FT, IN(posRef.current.z));
+    camera.rotation.set(0, yawRef.current, 0);
+
+    const dom = gl.domElement;
+    const requestLock = () => { if (!lockedRef.current) dom.requestPointerLock(); };
+    const onLockChange = () => { lockedRef.current = document.pointerLockElement === dom; };
+    const onMouseMove = (e) => {
+      if (!lockedRef.current) return;
+      yawRef.current -= e.movementX * LOOK_SENSITIVITY;
+      pitchRef.current = Math.max(-1.3, Math.min(1.3, pitchRef.current - e.movementY * LOOK_SENSITIVITY));
+    };
+    const onKeyDown = (e) => {
+      keysRef.current[e.code] = true;
+      if (e.code === "Escape") onExit?.();
+    };
+    const onKeyUp = (e) => { keysRef.current[e.code] = false; };
+
+    dom.addEventListener("click", requestLock);
+    document.addEventListener("pointerlockchange", onLockChange);
+    document.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      dom.removeEventListener("click", requestLock);
+      document.removeEventListener("pointerlockchange", onLockChange);
+      document.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      if (document.pointerLockElement === dom) document.exitPointerLock();
+      keysRef.current = {};
+    };
+  }, [active, camera, gl, startPos, onExit]);
+
+  useFrame((_, delta) => {
+    if (!active) return;
+    const keys = keysRef.current;
+    let fwd = 0, strafe = 0;
+    if (keys.KeyW || keys.ArrowUp) fwd += 1;
+    if (keys.KeyS || keys.ArrowDown) fwd -= 1;
+    if (keys.KeyD || keys.ArrowRight) strafe += 1;
+    if (keys.KeyA || keys.ArrowLeft) strafe -= 1;
+    if (fwd !== 0 || strafe !== 0) {
+      const len = Math.hypot(fwd, strafe);
+      fwd /= len; strafe /= len;
+      const yaw = yawRef.current;
+      const forward = { x: -Math.sin(yaw), z: -Math.cos(yaw) };
+      const right = { x: Math.cos(yaw), z: -Math.sin(yaw) };
+      const stepFt = WALK_SPEED_FTPS * delta;
+      const nxIn = posRef.current.x + (forward.x * fwd + right.x * strafe) * stepFt * 12;
+      const nzIn = posRef.current.z + (forward.z * fwd + right.z * strafe) * stepFt * 12;
+      posRef.current = resolveCircleVsBoxes(nxIn, nzIn, WALK_RADIUS_IN, wallBoxes.concat(furnitureBoxes));
+    }
+    camera.position.set(IN(posRef.current.x), EYE_HEIGHT_FT, IN(posRef.current.z));
+    camera.rotation.set(pitchRef.current, yawRef.current, 0);
+  });
+
+  return null;
+}
+
 // Memoized — walls only change when the stage's own wall/room data changes,
 // not when furniture is dragged elsewhere in the scene. Without this, every
 // furniture commit re-rendered every wall and forced R3F to recreate their
@@ -947,6 +1063,14 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
   const cx = IN(feature.x) + w / 2, cz = IN(feature.y) + h / 2;
   const hitboxH = Math.max(2, Math.min(6.5, IN(Math.max(wIn, hIn))));
   const downPos = useRef(null);
+  // Wall collision treats everything as axis-aligned (walls are always
+  // horizontal/vertical here), so a 90/270-rotated piece needs its stored
+  // width/height swapped before being used as a world-aligned half-extent —
+  // otherwise a piece rotated to face east/west got clamped using its
+  // unrotated (larger) dimension along the wrong axis, stopping it short of
+  // the wall by the difference instead of flush against it.
+  const rot90 = Math.abs(((feature.rotation || 0) % 180) - 90) < 1;
+  const wallWIn = rot90 ? hIn : wIn, wallHIn = rot90 ? wIn : hIn;
 
   return (
     <group ref={groupRef} position={[cx, 0, cz]} rotation={[0, -((feature.rotation || 0) * Math.PI) / 180, 0]}
@@ -964,7 +1088,7 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
         e.stopPropagation();
         downPos.current = { x: e.clientX, y: e.clientY };
         onSelect(feature.id, groupRef);
-        if (mode === "translate") onDragStart(feature.id, groupRef, e, wIn, hIn);
+        if (mode === "translate") onDragStart(feature.id, groupRef, e, wallWIn, wallHIn);
       }}>
       {/* Invisible hitbox — taller than the old paper-thin version so steep
           camera angles still land a click on the piece instead of missing it. */}
@@ -990,6 +1114,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const [openDoors, setOpenDoors] = useState(new Set());
   const [deployedScreens, setDeployedScreens] = useState(new Set());
   const [orbitEnabled, setOrbitEnabled] = useState(true);
+  const [viewMode, setViewMode] = useState("orbit"); // "orbit" | "walk"
   const [hoveredRoom, setHoveredRoom] = useState(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const groupRefs = useRef({});
@@ -1034,6 +1159,24 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const nonPoleFeatures = features.filter((f) => f.type !== "pole");
   const screenFeature = features.find((f) => f.type === "projection_screen");
   const projectorFeature = features.find((f) => f.type === "projector");
+
+  const wallBoxes = useMemo(() => collisionSegments.map(wallBoxFor), [collisionSegments]);
+  const furnitureBoxes = useMemo(() => nonPoleFeatures.map((f) => {
+    const wIn = f.width || 20, hIn = f.height || 20;
+    const rot90 = Math.abs(((f.rotation || 0) % 180) - 90) < 1;
+    const halfW = (rot90 ? hIn : wIn) / 2, halfH = (rot90 ? wIn : hIn) / 2;
+    const cx = f.x + (f.width || 20) / 2, cz = f.y + (f.height || 20) / 2;
+    return { x0: cx - halfW, x1: cx + halfW, z0: cz - halfH, z1: cz + halfH };
+  }), [nonPoleFeatures]);
+  // Walk mode starts in the middle of whichever room has the most floor
+  // area — guaranteed open space, unlike the building's geometric center
+  // (which can land inside a dividing wall).
+  const walkStart = useMemo(() => {
+    const rooms = stage?.rooms || [];
+    const biggest = rooms.reduce((best, r) => (!best || r.width * r.height > best.width * best.height ? r : best), null);
+    if (!biggest) return { x: 0, z: 0, yaw: 0 };
+    return { x: biggest.x + biggest.width / 2, z: biggest.y + biggest.height / 2, yaw: 0 };
+  }, [stage]);
 
   const doors = useMemo(() => {
     const list = [];
@@ -1187,6 +1330,20 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
         </div>
         <p className="editor-hint">Drag to orbit, scroll to zoom, right-drag to pan.</p>
 
+        <div className="editor-divider" />
+        <div className="view-mode-toggle">
+          <button className={viewMode === "orbit" ? "active" : ""} onClick={() => setViewMode("orbit")}>Orbit View</button>
+          <button className={viewMode === "walk" ? "active" : ""} onClick={() => { deselect(); setViewMode("walk"); }}>Walk Mode</button>
+        </div>
+        {viewMode === "walk" ? (
+          <>
+            <p className="editor-hint">Click the view to look around with the mouse, WASD or arrow keys to move. Esc or the button below to exit.</p>
+            <button className="palette-rotate" onClick={() => setViewMode("orbit")}>Exit Walk Mode</button>
+          </>
+        ) : (
+          <p className="editor-hint">Walk Mode lets you move through the space at eye level instead of orbiting above it.</p>
+        )}
+
         <LayoutPresets stageId={stageId} onLoaded={onFeaturesChanged} />
         <RoomRenderPanel stage={stage} glRef={glRef} />
       </div>
@@ -1262,10 +1419,12 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
             <DragController groupRefs={groupRefs} dragStateRef={dragStateRef}
               setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} wallSegments={collisionSegments} />
 
-            <OrbitControls ref={orbitRef} enabled={orbitEnabled} target={[centerX, 1.5, centerZ]}
+            <OrbitControls ref={orbitRef} enabled={viewMode === "orbit" && orbitEnabled} target={[centerX, 1.5, centerZ]}
               maxPolarAngle={Math.PI / 2.05}
               enableDamping dampingFactor={0.12}
               zoomSpeed={2.2} minDistance={4} maxDistance={Math.max(IN(maxX), IN(maxY)) * 2.5} />
+            <WalkControls active={viewMode === "walk"} wallBoxes={wallBoxes} furnitureBoxes={furnitureBoxes}
+              startPos={walkStart} onExit={() => setViewMode("orbit")} />
 
             {/* Conservative post-processing — bloom makes brass/glass highlights and
                 warm lighting pop; no SSAO/DOF, keeping frame cost low. */}

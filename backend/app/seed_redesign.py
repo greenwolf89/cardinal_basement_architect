@@ -142,16 +142,18 @@ divider_wall.thickness_in = 6
 db.commit()
 
 # ---------------- Openings ----------------
-# Studio front wall: window - door - window, roughly centered on the studio's own span
-# of the wall (144'-292.5'), not spilling onto the Storage & Water Filtration side.
+# Studio front wall: two windows grouped toward the interior divider, then the
+# exterior door near the true exterior corner (east end, away from the
+# divider wall shared with Storage & Water Filtration) — not centered.
 db.add(models.Opening(wall_id=front_wall.id, type="door", offset_in=12, width_in=32,
                        notes="Existing side door — kept for Storage & Water Filtration access."))
-db.add(models.Opening(wall_id=front_wall.id, type="window", offset_in=163, width_in=30,
-                       notes="Window, left of the studio door."))
-db.add(models.Opening(wall_id=front_wall.id, type="glass_door", offset_in=199, width_in=36,
-                       notes="New exterior door for the Music Studio — mostly glass, dark metal frame."))
-db.add(models.Opening(wall_id=front_wall.id, type="window", offset_in=241, width_in=30,
-                       notes="Window, right of the studio door."))
+db.add(models.Opening(wall_id=front_wall.id, type="window", offset_in=152, width_in=30,
+                       notes="Window, west of the studio door (toward the interior divider)."))
+db.add(models.Opening(wall_id=front_wall.id, type="window", offset_in=188, width_in=30,
+                       notes="Window, west of the studio door (toward the interior divider)."))
+db.add(models.Opening(wall_id=front_wall.id, type="glass_door", offset_in=246, width_in=36,
+                       notes="New exterior door for the Music Studio — mostly glass, dark metal frame. "
+                       "Positioned near the exterior corner, away from the interior divider wall."))
 db.add(models.Opening(wall_id=divider_wall.id, type="door", offset_in=195, width_in=36,
                        notes="Music Studio -> Storage & Water Filtration, near the back (basement) wall."))
 db.add(models.Opening(wall_id=west_wall.id, type="egress_window", offset_in=128, width_in=36,
