@@ -54,7 +54,10 @@ TOTAL_D = GARAGE_D + BAND_D + BASEMENT_D
 BAND_Y = GARAGE_D
 BASEMENT_Y = GARAGE_D + BAND_D
 DIVIDER_X = 144  # pole: 12' from west wall
-STAIR_X = 258  # framing wall enclosing the stairwell, matching the old platform's west edge
+STAIR_X = 260  # framing wall enclosing the stairwell — matches the *Current* stage's
+# "Closet under steps" / "Platform" divider, not the platform's own west edge. The
+# actual stairs run above the former closet (144-260); the platform east of that
+# (260-292.5) is just the flat landing at their base, not the stair run itself.
 
 UTILITY_W = 48  # 4'
 BATHROOM_W = 96  # 8'
@@ -80,12 +83,13 @@ rooms = [
      "6'x8' — wall-hung toilet, floating carved cedar vanity with brass vessel sink, arched "
      "Moroccan mirror. Sand Tadelakt plaster walls over Moroccan mosaic floor tile. "
      "Door in from the Living/Family Room."),
-    ("Hallway", BATH_UTIL_W, BAND_Y, STAIR_X - BATH_UTIL_W, BAND_D, "#f2f2e9",
-     "Open — no interior walls on this side. Connects the Dry Zone, the Stair Landing, "
-     "and the Living/Family Room below."),
-    ("Stair Landing", STAIR_X, BAND_Y, FULL_W - STAIR_X, BAND_D, "#ead9c3",
-     "Framed stairwell enclosure — stairs up to the main house, accessed from the Music "
-     "Studio via the door in this wall. Used to be the garage-access platform."),
+    ("Stair Landing", BATH_UTIL_W, BAND_Y, STAIR_X - BATH_UTIL_W, BAND_D, "#ead9c3",
+     "Framed stairwell enclosure — stairs up to the main house. Used to be the "
+     "walled-off storage closet under the stairs."),
+    ("Hallway", STAIR_X, BAND_Y, FULL_W - STAIR_X, BAND_D, "#f2f2e9",
+     "Open landing at the foot of the stairs — connects the Music Studio (via the door "
+     "in the stairwell wall) down to the Living/Family Room below. Used to be the "
+     "garage-access platform."),
     ("Living / Family Room", 0, BASEMENT_Y, FULL_W, BASEMENT_D, "#f4ecd8",
      "Built-in shelving, kid play zone, family + sleeper sofa, mini-split (18,000 BTU). "
      "Egress window on west wall.",
@@ -175,7 +179,7 @@ db.add(models.Opening(wall_id=dry_wet_divider.id, type="arch_glass", offset_in=4
                        notes="96\"W x 96\"H custom steam glass enclosure: two fixed panels + a "
                        "28\"-32\" hinged door, under a Tadelakt-plastered Moorish arch."))
 db.add(models.Opening(wall_id=band_north_wall.id, type="door", offset_in=265, width_in=25,
-                       notes="Music Studio -> Stair Landing."))
+                       notes="Music Studio -> Hallway (the landing at the foot of the stairs)."))
 db.commit()
 
 # ---------------- Features ----------------
@@ -223,7 +227,13 @@ feature("Living / Family Room", "built_in_shelving", FULL_W - 14, BASEMENT_Y + 6
 feature("Living / Family Room", "kid_zone", 15, BASEMENT_Y + BASEMENT_D - 95, 80, 80, "Kid play zone")
 feature("Living / Family Room", "mini_split", FULL_W - 30, BASEMENT_Y + 8, 16, 7, "Mini-split — 18,000 BTU")
 
-feature("Stair Landing", "stairs", STAIR_X, BAND_Y, FULL_W - STAIR_X, BAND_D, "Stairs up to the main house")
+# Centered in the Stair Landing room at a realistic stair width (40") rather
+# than spanning the room's full width — the rest of the room's floor area is
+# the old "closet under the stairs" space alongside the run.
+_stair_w = 40
+_stair_center_x = BATH_UTIL_W + (STAIR_X - BATH_UTIL_W) / 2
+feature("Stair Landing", "stairs", _stair_center_x - _stair_w / 2, BAND_Y, _stair_w, BAND_D,
+        "Stairs up to the main house")
 
 # Home-theater corner: the projection screen hangs from the structural beam
 # (DIVIDER_X=144, which runs the full depth of the building), rotated 90 deg

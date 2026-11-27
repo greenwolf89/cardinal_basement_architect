@@ -967,20 +967,24 @@ function SpaceshipLoft({ w, h }) {
   );
 }
 
-// A straight flight of stairs rising from floor level (local -Z end) to
-// ceiling height (local +Z end) across the feature's own depth (h) — this
-// app has no concept of floor-to-floor elevation or a second story, so the
-// rise is necessarily compressed into whatever footprint the stairwell has,
-// steeper than a real code-compliant run. That's fine for what this is: a
-// schematic "there are stairs here, going up to the main house" marker, not
-// a construction drawing. Simple diagonal rails on both sides read clearly
-// at low-poly scale without needing individual balusters.
+// A straight flight of stairs rising from floor level (local -Z end) across
+// the feature's own depth (h), at roughly a 45deg pitch (equal rise/run per
+// ~10in step) — steeper than code (7:11) but this landing's depth doesn't
+// come close to allowing a full code-compliant run up to the 8ft ceiling,
+// and forcing the rise to reach the ceiling anyway (an earlier version)
+// produced an absurd near-vertical ladder. A 45deg flight reads clearly as
+// "stairs going up," rising partway and continuing beyond this footprint
+// toward the main house — the same honest-partial-view approach already
+// used for the kid-zone loft's ladder. Simple diagonal rails on both sides
+// read clearly at low-poly scale without needing individual balusters.
 function StairsMesh({ w, h }) {
-  const steps = 12;
-  const stepRise = CEILING_H / steps;
+  const TREAD_FT = 10 / 12;
+  const steps = Math.max(3, Math.round(h / TREAD_FT));
   const stepRun = h / steps;
-  const railLen = Math.sqrt(h * h + CEILING_H * CEILING_H);
-  const railAngle = Math.atan2(CEILING_H, h);
+  const stepRise = stepRun;
+  const totalRise = stepRise * steps;
+  const railLen = Math.sqrt(h * h + totalRise * totalRise);
+  const railAngle = Math.atan2(totalRise, h);
   return (
     <group>
       {Array.from({ length: steps }).map((_, i) => {
@@ -994,7 +998,7 @@ function StairsMesh({ w, h }) {
         );
       })}
       {[-1, 1].map((side) => (
-        <mesh key={side} position={[(side * w) / 2 - side * 0.1, CEILING_H / 2, 0]}
+        <mesh key={side} position={[(side * w) / 2 - side * 0.1, totalRise / 2, 0]}
           rotation={[railAngle, 0, 0]} castShadow>
           <boxGeometry args={[0.15, 0.15, railLen]} />
           <Mat kind="chrome" color="#3a3a3a" metalness={0.4} roughness={0.5} />
