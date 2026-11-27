@@ -341,8 +341,13 @@ function resolveCircleVsBoxes(x, z, radius, boxes) {
 
 const WALK_SPEED_FTPS = 9; // ft/sec
 const WALK_RADIUS_IN = 10; // inches — player collision radius
-const EYE_HEIGHT_FT = 5.5;
+const EYE_HEIGHT_FT = 5.5; // a 6ft person's eyes sit at roughly 93% of height
 const LOOK_SENSITIVITY = 0.0045;
+// The orbit camera uses a 45deg FOV, which reads as a telephoto/zoomed-in
+// view up close — fine from a distance orbiting overhead, but claustrophobic
+// and "too zoomed" when standing inside a room at eye height. ~75deg is much
+// closer to ordinary human vision.
+const WALK_FOV = 75;
 
 // First-person walkthrough: click-and-drag to look (same gesture as orbit,
 // so it feels like the same tool rather than a different mini-app), WASD/
@@ -373,6 +378,9 @@ function WalkControls({ active, wallBoxes, furnitureBoxes, startPos, onExit }) {
     pitchRef.current = 0;
     camera.position.set(IN(posRef.current.x), EYE_HEIGHT_FT, IN(posRef.current.z));
     camera.rotation.set(0, yawRef.current, 0);
+    const originalFov = camera.fov;
+    camera.fov = WALK_FOV;
+    camera.updateProjectionMatrix();
 
     const dom = gl.domElement;
     const onPointerDown = (e) => { dragRef.current = { x: e.clientX, y: e.clientY }; };
@@ -404,6 +412,8 @@ function WalkControls({ active, wallBoxes, furnitureBoxes, startPos, onExit }) {
       window.removeEventListener("keyup", onKeyUp);
       keysRef.current = {};
       dragRef.current = null;
+      camera.fov = originalFov;
+      camera.updateProjectionMatrix();
     };
   }, [active, camera, gl, startPos, onExit]);
 
@@ -736,7 +746,7 @@ const SteamGlassEnclosure = memo(function SteamGlassEnclosure({ wall, opening, d
   );
 });
 
-const RoomFloor = memo(function RoomFloor({ room, deselect, onRoomSelect, onRoomHover, onRoomUnhover }) {
+const RoomFloor = memo(function RoomFloor({ room, deselect, onRoomSelect, onRoomHover, onRoomUnhover, interactive = true }) {
   const w = IN(room.width), d = IN(room.height);
   const cx = IN(room.x) + w / 2, cz = IN(room.y) + d / 2;
   const floorMat = floorMaterialFor(room);
@@ -759,16 +769,17 @@ const RoomFloor = memo(function RoomFloor({ room, deselect, onRoomSelect, onRoom
     // ALSO opening this room's detail panel on release. downPos/CLICK_SLOP
     // gates it to genuine clicks, same threshold the furniture drag uses.
     <mesh position={[cx, 0, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow
-      onPointerDown={(e) => { downPos.current = { x: e.clientX, y: e.clientY }; }}
+      onPointerDown={(e) => { if (interactive) downPos.current = { x: e.clientX, y: e.clientY }; }}
       onClick={(e) => {
+        if (!interactive) return;
         e.stopPropagation();
         const d0 = downPos.current;
         if (d0 && Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > CLICK_SLOP_PX) return;
         deselect?.();
         onRoomSelect?.(room);
       }}
-      onPointerMove={(e) => onRoomHover?.(room, e)}
-      onPointerOut={() => onRoomUnhover?.(room)}>
+      onPointerMove={(e) => { if (interactive) onRoomHover?.(room, e); }}
+      onPointerOut={() => { if (interactive) onRoomUnhover?.(room); }}>
       <planeGeometry args={[w, d]} />
       <Mat kind={floorMat.kind} color={floorMat.color} />
     </mesh>
@@ -1077,7 +1088,7 @@ function FurnitureMesh({ type, w, h, deployed }) {
 // object in the `features` array (see commitTransform below), so every other
 // Furniture instance still receives the exact same `feature` reference and
 // can skip re-rendering entirely once `onSelect` is stabilized too.
-const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, onDragStart, screenDeployed, onToggleScreen }) {
+const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, onDragStart, screenDeployed, onToggleScreen, interactive = true }) {
   const groupRef = useRef();
   const wIn = feature.width || 20, hIn = feature.height || 20;
   const w = IN(wIn), h = IN(hIn);
@@ -1096,6 +1107,7 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
   return (
     <group ref={groupRef} position={[cx, 0, cz]} rotation={[0, -((feature.rotation || 0) * Math.PI) / 180, 0]}
       onClick={(e) => {
+        if (!interactive) return;
         e.stopPropagation();
         // Same drag-vs-click gate as RoomFloor — without it, dragging the
         // screen to reposition it also toggled its deployed state, since
@@ -1106,6 +1118,12 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
         if (feature.type === "projection_screen") onToggleScreen(feature.id);
       }}
       onPointerDown={(e) => {
+        // In Walk Mode this would otherwise fight with WalkControls' own
+        // drag-to-look listener for the same mouse gesture — both reading
+        // the same pointer drag at once (one rotating the camera, the other
+        // trying to move this piece of furniture) is exactly what made
+        // rotation feel "wonky."
+        if (!interactive) return;
         e.stopPropagation();
         downPos.current = { x: e.clientX, y: e.clientY };
         onSelect(feature.id, groupRef);
@@ -1165,6 +1183,13 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   // recreating their BufferGeometry) just because these callback props got a
   // new reference.
   const deselect = useCallback(() => setSelectedId(null), []);
+  // Stable reference is load-bearing, not just tidiness: WalkControls' setup
+  // effect depends on this callback, and an inline arrow function here would
+  // be a new reference on every parent re-render (which happens constantly
+  // from room-hover tracking alone) — re-running that effect resets the
+  // walker's position/orientation back to the start, which is exactly what
+  // "the view keeps resetting randomly" was.
+  const exitWalkMode = useCallback(() => setViewMode("orbit"), []);
   const handleRoomHover = useCallback((room, e) => {
     setHoveredRoom(room);
     const rect = wrapRef.current?.getBoundingClientRect();
@@ -1416,7 +1441,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
               blur={2} far={6} resolution={512} />
 
             {stage.rooms.map((room) => (
-              <RoomFloor key={`f-${room.id}`} room={room} deselect={deselect}
+              <RoomFloor key={`f-${room.id}`} room={room} deselect={deselect} interactive={viewMode === "orbit"}
                 onRoomSelect={onRoomSelect} onRoomHover={handleRoomHover} onRoomUnhover={handleRoomUnhover} />
             ))}
             {stage.rooms.map((room) => <RoomLabel key={`l-${room.id}`} room={room} />)}
@@ -1436,7 +1461,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
               deployed={!!screenFeature && deployedScreens.has(screenFeature.id)} />
 
             {nonPoleFeatures.map((f) => (
-              <Furniture key={f.id} feature={f} selected={selectedId === f.id}
+              <Furniture key={f.id} feature={f} selected={selectedId === f.id} interactive={viewMode === "orbit"}
                 onSelect={handleSelect} mode={mode} onDragStart={handleDragStart}
                 screenDeployed={deployedScreens.has(f.id)} onToggleScreen={toggleScreen} />
             ))}
@@ -1455,15 +1480,17 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
                 onMouseUp={() => { setOrbitEnabled(true); commitTransform(); }}
               />
             )}
-            <DragController groupRefs={groupRefs} dragStateRef={dragStateRef}
-              setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} wallSegments={collisionSegments} />
+            {viewMode === "orbit" && (
+              <DragController groupRefs={groupRefs} dragStateRef={dragStateRef}
+                setOrbitEnabled={setOrbitEnabled} onDragEnd={commitPosition} wallSegments={collisionSegments} />
+            )}
 
             <OrbitControls ref={orbitRef} enabled={viewMode === "orbit" && orbitEnabled} target={[centerX, 1.5, centerZ]}
               maxPolarAngle={Math.PI / 2.05}
               enableDamping dampingFactor={0.12}
               zoomSpeed={2.2} minDistance={4} maxDistance={Math.max(IN(maxX), IN(maxY)) * 2.5} />
             <WalkControls active={viewMode === "walk"} wallBoxes={wallBoxes} furnitureBoxes={furnitureBoxes}
-              startPos={walkStart} onExit={() => setViewMode("orbit")} />
+              startPos={walkStart} onExit={exitWalkMode} />
 
             {/* Conservative post-processing — bloom makes brass/glass highlights and
                 warm lighting pop; no SSAO/DOF, keeping frame cost low. */}
