@@ -155,6 +155,7 @@ const FEATURE_COLORS = {
   projection_screen: "#e8e6e0",
   sectional_sofa: "#5b4bd6",
   projector: "#2b2b2b",
+  stairs: "#8a6a4a",
 };
 
 const PALETTE = [
@@ -165,6 +166,7 @@ const PALETTE = [
   { type: "kid_zone", label: "Kid Play Zone (Loft)", w: 72, h: 96 },
   { type: "projection_screen", label: "Projection Screen", w: 80, h: 6 },
   { type: "projector", label: "Ceiling Projector", w: 14, h: 10 },
+  { type: "stairs", label: "Stairs", w: 34, h: 40 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
@@ -216,6 +218,7 @@ const DEFAULT_ROOM_HINTS = {
   boiler: ["utility"], appliance: ["utility"],
   water_filtration: ["storage"], shelving: ["storage"], electric_panel: ["storage"],
   acoustic_treatment: ["studio"],
+  stairs: ["stair landing", "hallway"],
 };
 
 function pickDefaultRoom(rooms, type) {
@@ -964,6 +967,43 @@ function SpaceshipLoft({ w, h }) {
   );
 }
 
+// A straight flight of stairs rising from floor level (local -Z end) to
+// ceiling height (local +Z end) across the feature's own depth (h) — this
+// app has no concept of floor-to-floor elevation or a second story, so the
+// rise is necessarily compressed into whatever footprint the stairwell has,
+// steeper than a real code-compliant run. That's fine for what this is: a
+// schematic "there are stairs here, going up to the main house" marker, not
+// a construction drawing. Simple diagonal rails on both sides read clearly
+// at low-poly scale without needing individual balusters.
+function StairsMesh({ w, h }) {
+  const steps = 12;
+  const stepRise = CEILING_H / steps;
+  const stepRun = h / steps;
+  const railLen = Math.sqrt(h * h + CEILING_H * CEILING_H);
+  const railAngle = Math.atan2(CEILING_H, h);
+  return (
+    <group>
+      {Array.from({ length: steps }).map((_, i) => {
+        const riseY = stepRise * (i + 1);
+        const z = -h / 2 + stepRun * (i + 0.5);
+        return (
+          <mesh key={i} position={[0, riseY - stepRise / 2, z]} castShadow receiveShadow>
+            <boxGeometry args={[w, riseY, stepRun]} />
+            <Mat kind="wood" color="#8a6a4a" />
+          </mesh>
+        );
+      })}
+      {[-1, 1].map((side) => (
+        <mesh key={side} position={[(side * w) / 2 - side * 0.1, CEILING_H / 2, 0]}
+          rotation={[railAngle, 0, 0]} castShadow>
+          <boxGeometry args={[0.15, 0.15, railLen]} />
+          <Mat kind="chrome" color="#3a3a3a" metalness={0.4} roughness={0.5} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 // Low-poly, recognizable-silhouette furniture — not photoreal, just "a chair is a chair".
 function FurnitureMesh({ type, w, h, deployed }) {
   const color = FEATURE_COLORS[type] || "#888";
@@ -1055,6 +1095,8 @@ function FurnitureMesh({ type, w, h, deployed }) {
       );
     case "kid_zone":
       return <SpaceshipLoft w={w} h={h} />;
+    case "stairs":
+      return <StairsMesh w={w} h={h} />;
     case "electric_panel":
       return <mesh position={[0, 4.5, 0]} castShadow><boxGeometry args={[w, h, 0.2]} /><Mat kind="chrome" color={color} metalness={0.4} /></mesh>;
     case "acoustic_treatment":

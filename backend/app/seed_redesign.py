@@ -54,6 +54,7 @@ TOTAL_D = GARAGE_D + BAND_D + BASEMENT_D
 BAND_Y = GARAGE_D
 BASEMENT_Y = GARAGE_D + BAND_D
 DIVIDER_X = 144  # pole: 12' from west wall
+STAIR_X = 258  # framing wall enclosing the stairwell, matching the old platform's west edge
 
 UTILITY_W = 48  # 4'
 BATHROOM_W = 96  # 8'
@@ -79,9 +80,12 @@ rooms = [
      "6'x8' — wall-hung toilet, floating carved cedar vanity with brass vessel sink, arched "
      "Moroccan mirror. Sand Tadelakt plaster walls over Moroccan mosaic floor tile. "
      "Door in from the Living/Family Room."),
-    ("Hallway / Stair Landing", BATH_UTIL_W, BAND_Y, FULL_W - BATH_UTIL_W, BAND_D, "#f2f2e9",
-     "Open — no interior walls. Connects the garage door, the stairs up to the main house, "
-     "and the Living/Family Room below. Used to be split into a storage closet and a platform."),
+    ("Hallway", BATH_UTIL_W, BAND_Y, STAIR_X - BATH_UTIL_W, BAND_D, "#f2f2e9",
+     "Open — no interior walls on this side. Connects the Dry Zone, the Stair Landing, "
+     "and the Living/Family Room below."),
+    ("Stair Landing", STAIR_X, BAND_Y, FULL_W - STAIR_X, BAND_D, "#ead9c3",
+     "Framed stairwell enclosure — stairs up to the main house, accessed from the Music "
+     "Studio via the door in this wall. Used to be the garage-access platform."),
     ("Living / Family Room", 0, BASEMENT_Y, FULL_W, BASEMENT_D, "#f4ecd8",
      "Built-in shelving, kid play zone, family + sleeper sofa, mini-split (18,000 BTU). "
      "Egress window on west wall.",
@@ -129,9 +133,13 @@ dry_wet_divider = wall(UTILITY_W, DRY_ZONE_Y, BATH_UTIL_W, DRY_ZONE_Y, "new",
                        "Zone and the Wet Hammam Zone.")
 
 band_north_wall = wall(0, BAND_Y, FULL_W, BAND_Y, "existing")
-# No walls at all east of x=144 in the band, and no wall at y=275 anywhere — the old
-# storage-closet-under-the-stairs and garage-access platform are now one open
-# Hallway / Stair Landing, leading straight through to the Living/Family Room.
+# No wall at y=275 anywhere, and no wall between the Hallway and Utility/Bathroom
+# block either — the only interior division east of the pole/beam line is this
+# one, framing the stairwell (visible stairs up to the main house) off from the
+# open Hallway that leads through to the Living/Family Room.
+stair_wall = wall(STAIR_X, BAND_Y, STAIR_X, BASEMENT_Y, "new", build_status="framed",
+    notes="Framing for the stair landing — encloses the stairwell instead of leaving it "
+    "open to the rest of the hallway.")
 
 # Garage dividing wall — framed now (item 12): 6" stud wall on the pole/beam line.
 divider_wall = wall(DIVIDER_X, 0, DIVIDER_X, GARAGE_D, "new", build_status="framed",
@@ -167,7 +175,7 @@ db.add(models.Opening(wall_id=dry_wet_divider.id, type="arch_glass", offset_in=4
                        notes="96\"W x 96\"H custom steam glass enclosure: two fixed panels + a "
                        "28\"-32\" hinged door, under a Tadelakt-plastered Moorish arch."))
 db.add(models.Opening(wall_id=band_north_wall.id, type="door", offset_in=265, width_in=25,
-                       notes="Hallway/Stair Landing -> garage door."))
+                       notes="Music Studio -> Stair Landing."))
 db.commit()
 
 # ---------------- Features ----------------
@@ -214,6 +222,8 @@ feature("Living / Family Room", "built_in_shelving", FULL_W - 14, BASEMENT_Y + 6
         "Built-in shelving along the east wall (longest unbroken wall).")
 feature("Living / Family Room", "kid_zone", 15, BASEMENT_Y + BASEMENT_D - 95, 80, 80, "Kid play zone")
 feature("Living / Family Room", "mini_split", FULL_W - 30, BASEMENT_Y + 8, 16, 7, "Mini-split — 18,000 BTU")
+
+feature("Stair Landing", "stairs", STAIR_X, BAND_Y, FULL_W - STAIR_X, BAND_D, "Stairs up to the main house")
 
 # Home-theater corner: the projection screen hangs from the structural beam
 # (DIVIDER_X=144, which runs the full depth of the building), rotated 90 deg

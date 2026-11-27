@@ -32,6 +32,7 @@ const FEATURE_COLORS = {
   projection_screen: "#e8e6e0",
   sectional_sofa: "#5b4bd6",
   projector: "#2b2b2b",
+  stairs: "#8a6a4a",
 };
 
 const PALETTE = [
@@ -42,6 +43,7 @@ const PALETTE = [
   { type: "kid_zone", label: "Kid Play Zone (Loft)", w: 72, h: 96 },
   { type: "projection_screen", label: "Projection Screen", w: 80, h: 6 },
   { type: "projector", label: "Ceiling Projector", w: 14, h: 10 },
+  { type: "stairs", label: "Stairs", w: 34, h: 40 },
   { type: "toilet", label: "Toilet", w: 16, h: 20 },
   { type: "sink", label: "Sink", w: 20, h: 15 },
   { type: "shower", label: "Walk-in Shower", w: 40, h: 32 },
@@ -80,6 +82,7 @@ const DEFAULT_ROOM_HINTS = {
   boiler: ["utility"], appliance: ["utility"],
   water_filtration: ["storage"], shelving: ["storage"], electric_panel: ["storage"],
   acoustic_treatment: ["studio"],
+  stairs: ["stair landing", "hallway"],
 };
 
 function pickDefaultRoom(rooms, type) {
