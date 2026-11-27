@@ -29,6 +29,9 @@ NEW_COLUMNS = {
     "checklist_items": [
         ("room_name", "TEXT"),
     ],
+    "layout_presets": [
+        ("room_colors_json", "TEXT"),
+    ],
 }
 
 

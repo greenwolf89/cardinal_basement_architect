@@ -379,6 +379,11 @@ def _feature_snapshot(db: Session, stage_id: int) -> str:
     ])
 
 
+def _room_color_snapshot(db: Session, stage_id: int) -> str:
+    rooms = db.query(models.Room).filter(models.Room.stage_id == stage_id).all()
+    return json.dumps({r.name: r.paint_color for r in rooms})
+
+
 @app.get("/presets", response_model=list[schemas.LayoutPresetOut])
 def list_presets(stage_id: int, db: Session = Depends(get_db)):
     return db.query(models.LayoutPreset).filter(models.LayoutPreset.stage_id == stage_id).all()
@@ -389,6 +394,7 @@ def create_preset(preset: schemas.LayoutPresetCreate, db: Session = Depends(get_
     obj = models.LayoutPreset(
         stage_id=preset.stage_id, name=preset.name,
         features_json=_feature_snapshot(db, preset.stage_id),
+        room_colors_json=_room_color_snapshot(db, preset.stage_id),
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     db.add(obj)
@@ -406,6 +412,7 @@ def update_preset(preset_id: int, patch: schemas.LayoutPresetUpdate, db: Session
         obj.name = patch.name
     if patch.resave:
         obj.features_json = _feature_snapshot(db, obj.stage_id)
+        obj.room_colors_json = _room_color_snapshot(db, obj.stage_id)
     db.commit()
     db.refresh(obj)
     return obj
@@ -424,6 +431,12 @@ def load_preset(preset_id: int, db: Session = Depends(get_db)):
         f = models.Feature(stage_id=obj.stage_id, **item)
         db.add(f)
         new_features.append(f)
+    if obj.room_colors_json:
+        room_colors = json.loads(obj.room_colors_json)
+        rooms = db.query(models.Room).filter(models.Room.stage_id == obj.stage_id).all()
+        for r in rooms:
+            if r.name in room_colors:
+                r.paint_color = room_colors[r.name]
     db.commit()
     for f in new_features:
         db.refresh(f)

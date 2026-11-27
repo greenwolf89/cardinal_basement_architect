@@ -165,9 +165,10 @@ class LaborEntry(Base):
 
 class LayoutPreset(Base):
     """A named snapshot of a stage's furniture arrangement (excluding the pole
-    marker, which is structural). Loading one fully replaces the stage's
-    current non-pole features — same delete+recreate convention used
-    everywhere else in this codebase for stage geometry."""
+    marker, which is structural) plus each room's wall paint color. Loading
+    one fully replaces the stage's current non-pole features and room paint
+    colors — same delete+recreate convention used everywhere else in this
+    codebase for stage geometry."""
 
     __tablename__ = "layout_presets"
 
@@ -175,6 +176,7 @@ class LayoutPreset(Base):
     stage_id = Column(Integer, ForeignKey("stages.id"))
     name = Column(String)
     features_json = Column(Text)  # JSON array of {type,x,y,width,height,rotation,label,room_name}
+    room_colors_json = Column(Text, nullable=True)  # JSON object of {room_name: paint_color}
     created_at = Column(String, nullable=True)
 
 

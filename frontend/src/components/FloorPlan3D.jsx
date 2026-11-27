@@ -184,6 +184,17 @@ const CEILING_H = 8; // ft
 const BEAM_BOTTOM = 7; // ft — clearance under the beam that bisects the house
 const IN = (inches) => inches / 12; // inches -> feet
 
+// Wall/furniture collision treats everything as axis-aligned, so a piece
+// rotated to roughly face east/west needs its stored width/height swapped to
+// get a true world-aligned half-extent. A 20deg tolerance (not an exact-90
+// check) because free-rotated furniture from dragging the TransformControls
+// gizmo lands at angles like 272 or 358, not a clean 270 or 0 — those are
+// still clearly "facing sideways" for collision purposes, not "facing
+// forward," and should be swapped the same as an exact 90/270.
+function isRot90(rotation) {
+  return Math.abs(((rotation || 0) % 180) - 90) < 20;
+}
+
 function findRoomObjAt(rooms, x, y) {
   return rooms.find((r) => x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height) || null;
 }
@@ -331,21 +342,28 @@ function resolveCircleVsBoxes(x, z, radius, boxes) {
 const WALK_SPEED_FTPS = 9; // ft/sec
 const WALK_RADIUS_IN = 10; // inches — player collision radius
 const EYE_HEIGHT_FT = 5.5;
-const LOOK_SENSITIVITY = 0.0022;
+const LOOK_SENSITIVITY = 0.0045;
 
-// First-person walkthrough: click the canvas to lock the pointer, WASD/arrows
-// to move, mouse to look, Escape (or the Exit button) to leave. Lives
-// alongside OrbitControls rather than replacing it — only one is active at
-// a time, chosen by the Orbit/Walk toggle. Movement and collision both work
-// in inches (matching wall/feature coordinates), converting to feet only
-// when writing to the camera.
+// First-person walkthrough: click-and-drag to look (same gesture as orbit,
+// so it feels like the same tool rather than a different mini-app), WASD/
+// arrows to move, Escape (or the Exit button) to leave. An earlier version
+// used Pointer Lock (click once to capture the mouse, move freely) — more
+// standard for FPS games, but it meant look-around didn't work at all until
+// that first click registered, silently failed if the browser denied the
+// lock, and behaved nothing like the drag-to-orbit gesture already used
+// everywhere else in this view, which read as "rotation doesn't work
+// right." Drag-to-look has none of those failure modes. Lives alongside
+// OrbitControls rather than replacing it — only one is active at a time,
+// chosen by the Orbit/Walk toggle. Movement and collision both work in
+// inches (matching wall/feature coordinates), converting to feet only when
+// writing to the camera.
 function WalkControls({ active, wallBoxes, furnitureBoxes, startPos, onExit }) {
   const { camera, gl } = useThree();
   const yawRef = useRef(startPos.yaw || 0);
   const pitchRef = useRef(0);
   const posRef = useRef({ x: startPos.x, z: startPos.z }); // inches
   const keysRef = useRef({});
-  const lockedRef = useRef(false);
+  const dragRef = useRef(null);
 
   useEffect(() => {
     if (!active) return;
@@ -357,32 +375,35 @@ function WalkControls({ active, wallBoxes, furnitureBoxes, startPos, onExit }) {
     camera.rotation.set(0, yawRef.current, 0);
 
     const dom = gl.domElement;
-    const requestLock = () => { if (!lockedRef.current) dom.requestPointerLock(); };
-    const onLockChange = () => { lockedRef.current = document.pointerLockElement === dom; };
-    const onMouseMove = (e) => {
-      if (!lockedRef.current) return;
-      yawRef.current -= e.movementX * LOOK_SENSITIVITY;
-      pitchRef.current = Math.max(-1.3, Math.min(1.3, pitchRef.current - e.movementY * LOOK_SENSITIVITY));
+    const onPointerDown = (e) => { dragRef.current = { x: e.clientX, y: e.clientY }; };
+    const onPointerMove = (e) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      dragRef.current = { x: e.clientX, y: e.clientY };
+      yawRef.current -= dx * LOOK_SENSITIVITY;
+      pitchRef.current = Math.max(-1.3, Math.min(1.3, pitchRef.current - dy * LOOK_SENSITIVITY));
     };
+    const onPointerUp = () => { dragRef.current = null; };
     const onKeyDown = (e) => {
       keysRef.current[e.code] = true;
       if (e.code === "Escape") onExit?.();
     };
     const onKeyUp = (e) => { keysRef.current[e.code] = false; };
 
-    dom.addEventListener("click", requestLock);
-    document.addEventListener("pointerlockchange", onLockChange);
-    document.addEventListener("mousemove", onMouseMove);
+    dom.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => {
-      dom.removeEventListener("click", requestLock);
-      document.removeEventListener("pointerlockchange", onLockChange);
-      document.removeEventListener("mousemove", onMouseMove);
+      dom.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
-      if (document.pointerLockElement === dom) document.exitPointerLock();
       keysRef.current = {};
+      dragRef.current = null;
     };
   }, [active, camera, gl, startPos, onExit]);
 
@@ -1069,7 +1090,7 @@ const Furniture = memo(function Furniture({ feature, selected, onSelect, mode, o
   // otherwise a piece rotated to face east/west got clamped using its
   // unrotated (larger) dimension along the wrong axis, stopping it short of
   // the wall by the difference instead of flush against it.
-  const rot90 = Math.abs(((feature.rotation || 0) % 180) - 90) < 1;
+  const rot90 = isRot90(feature.rotation);
   const wallWIn = rot90 ? hIn : wIn, wallHIn = rot90 ? wIn : hIn;
 
   return (
@@ -1117,11 +1138,26 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const [viewMode, setViewMode] = useState("orbit"); // "orbit" | "walk"
   const [hoveredRoom, setHoveredRoom] = useState(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const groupRefs = useRef({});
   const orbitRef = useRef();
   const glRef = useRef(null);
   const wrapRef = useRef(null);
   const dragStateRef = useRef(null);
+
+  // The 3D view especially (walking around, orienting yourself) benefits from
+  // real screen space — fullscreen uses the browser's native Fullscreen API
+  // on the canvas wrapper rather than just a bigger fixed height, so it gets
+  // the entire display, not just "bigger than before."
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === wrapRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else wrapRef.current?.requestFullscreen();
+  }, []);
 
   // Stable across renders (useCallback + functional setState) so the memoized
   // RoomFloor/Door/SlidingDoor/FoldingDoor components below can actually bail
@@ -1163,7 +1199,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
   const wallBoxes = useMemo(() => collisionSegments.map(wallBoxFor), [collisionSegments]);
   const furnitureBoxes = useMemo(() => nonPoleFeatures.map((f) => {
     const wIn = f.width || 20, hIn = f.height || 20;
-    const rot90 = Math.abs(((f.rotation || 0) % 180) - 90) < 1;
+    const rot90 = isRot90(f.rotation);
     const halfW = (rot90 ? hIn : wIn) / 2, halfH = (rot90 ? wIn : hIn) / 2;
     const cx = f.x + (f.width || 20) / 2, cz = f.y + (f.height || 20) / 2;
     return { x0: cx - halfW, x1: cx + halfW, z0: cz - halfH, z1: cz + halfH };
@@ -1337,7 +1373,7 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
         </div>
         {viewMode === "walk" ? (
           <>
-            <p className="editor-hint">Click the view to look around with the mouse, WASD or arrow keys to move. Esc or the button below to exit.</p>
+            <p className="editor-hint">Drag to look around, WASD or arrow keys to move. Esc or the button below to exit.</p>
             <button className="palette-rotate" onClick={() => setViewMode("orbit")}>Exit Walk Mode</button>
           </>
         ) : (
@@ -1349,7 +1385,10 @@ export default function FloorPlan3D({ stage, stageId, onFeaturesChanged, onRoomS
       </div>
 
       <div className="editor-main">
-        <div className="editor-canvas-wrap view-fit" ref={wrapRef}>
+        <div className={`editor-canvas-wrap view-fit${isFullscreen ? " is-fullscreen" : ""}`} ref={wrapRef}>
+          <button className="fullscreen-btn" onClick={toggleFullscreen}>
+            {isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+          </button>
           <Canvas shadows gl={{ toneMapping: ACESFilmicToneMapping, toneMappingExposure: 1.05, preserveDrawingBuffer: true }}
             onCreated={(state) => { glRef.current = state.gl; }}
             onPointerMissed={deselect}
