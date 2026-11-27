@@ -137,11 +137,14 @@ dry_wet_divider = wall(UTILITY_W, DRY_ZONE_Y, BATH_UTIL_W, DRY_ZONE_Y, "new",
                        "Zone and the Wet Hammam Zone.")
 
 band_north_wall = wall(0, BAND_Y, FULL_W, BAND_Y, "existing")
-# No wall at y=275 anywhere, and no wall between the Hallway and Utility/Bathroom
-# block either — the only interior division east of the pole/beam line is this
-# one, framing the stairwell (visible stairs up to the main house) off from the
-# open Hallway that leads through to the Living/Family Room.
-stair_wall = wall(STAIR_X, BAND_Y, STAIR_X, BASEMENT_Y, "new", build_status="framed",
+# Encloses the stairwell along its south side, running parallel to the
+# stairs themselves (which run east-west, along the room's long dimension)
+# and to the existing band_north_wall on the other side — from the bathroom
+# block's own east edge to where the open Hallway begins. The landing is
+# open only on its east side, toward the Hallway — that's the entry point,
+# at the foot of the stairs. The Hallway (not this room) is what still leads
+# down to the Living/Family Room, same as before.
+stair_wall = wall(BATH_UTIL_W, BASEMENT_Y, STAIR_X, BASEMENT_Y, "new", build_status="framed",
     notes="Framing for the stair landing — encloses the stairwell instead of leaving it "
     "open to the rest of the hallway.")
 
@@ -227,13 +230,19 @@ feature("Living / Family Room", "built_in_shelving", FULL_W - 14, BASEMENT_Y + 6
 feature("Living / Family Room", "kid_zone", 15, BASEMENT_Y + BASEMENT_D - 95, 80, 80, "Kid play zone")
 feature("Living / Family Room", "mini_split", FULL_W - 30, BASEMENT_Y + 8, 16, 7, "Mini-split — 18,000 BTU")
 
-# Centered in the Stair Landing room at a realistic stair width (40") rather
-# than spanning the room's full width — the rest of the room's floor area is
-# the old "closet under the stairs" space alongside the run.
-_stair_w = 40
-_stair_center_x = BATH_UTIL_W + (STAIR_X - BATH_UTIL_W) / 2
-feature("Stair Landing", "stairs", _stair_center_x - _stair_w / 2, BAND_Y, _stair_w, BAND_D,
-        "Stairs up to the main house")
+# Runs east-west along the room's long dimension (116") — parallel to the
+# band_north_wall and the new south-side framing wall, not across the narrow
+# 40" depth. rotation=90 points the ascending end west (toward the bathroom
+# wall, continuing up toward the main house) with the foot of the stairs at
+# the east end, open to the Hallway — the natural entry point. A stored
+# width of 40" becomes the walkway's north-south extent after rotation
+# (matching the room's own depth); height=116" becomes the run length.
+_stair_run = STAIR_X - BATH_UTIL_W  # 116
+_stair_width = 40
+_stair_cx = (BATH_UTIL_W + STAIR_X) / 2
+_stair_cz = BAND_Y + BAND_D / 2
+feature("Stair Landing", "stairs", _stair_cx - _stair_width / 2, _stair_cz - _stair_run / 2,
+        _stair_width, _stair_run, "Stairs up to the main house", rotation=90)
 
 # Home-theater corner: the projection screen hangs from the structural beam
 # (DIVIDER_X=144, which runs the full depth of the building), rotated 90 deg

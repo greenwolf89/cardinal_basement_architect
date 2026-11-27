@@ -968,20 +968,24 @@ function SpaceshipLoft({ w, h }) {
 }
 
 // A straight flight of stairs rising from floor level (local -Z end) across
-// the feature's own depth (h), at roughly a 45deg pitch (equal rise/run per
-// ~10in step) — steeper than code (7:11) but this landing's depth doesn't
-// come close to allowing a full code-compliant run up to the 8ft ceiling,
-// and forcing the rise to reach the ceiling anyway (an earlier version)
-// produced an absurd near-vertical ladder. A 45deg flight reads clearly as
-// "stairs going up," rising partway and continuing beyond this footprint
-// toward the main house — the same honest-partial-view approach already
-// used for the kid-zone loft's ladder. Simple diagonal rails on both sides
-// read clearly at low-poly scale without needing individual balusters.
+// the feature's own depth (h), using real-world tread/riser proportions
+// (11in tread, 7.5in riser — close to code) rather than forcing the rise to
+// reach the full 8ft ceiling within whatever footprint happens to be
+// available. An earlier version derived the rise FROM the available depth
+// (forcing it to reach the ceiling), which produced either a near-vertical
+// ladder in a shallow room or a run that clipped through the ceiling in a
+// deep one — decoupling them means it always reads as an actual staircase,
+// rising partway and continuing beyond this footprint toward the main
+// house (the same honest-partial-view approach as the kid-zone loft's
+// ladder) rather than contorting to hit a specific height. Simple diagonal
+// rails on both sides read clearly at low-poly scale without needing
+// individual balusters.
 function StairsMesh({ w, h }) {
-  const TREAD_FT = 10 / 12;
+  const TREAD_FT = 11 / 12;
+  const RISER_FT = 7.5 / 12;
   const steps = Math.max(3, Math.round(h / TREAD_FT));
   const stepRun = h / steps;
-  const stepRise = stepRun;
+  const stepRise = RISER_FT;
   const totalRise = stepRise * steps;
   const railLen = Math.sqrt(h * h + totalRise * totalRise);
   const railAngle = Math.atan2(totalRise, h);
